@@ -15,26 +15,9 @@ fi
 source .venv/bin/activate
 
 echo "Installing Python dependencies..."
-pip install faster-whisper sounddevice numpy pydub
+pip install -r requirements.txt
 
-# 3. Check for Piper
-if [ ! -f "piper-bin/piper/piper" ]; then
-    echo "Downloading Piper..."
-    mkdir -p piper-bin
-    cd piper-bin
-    # Detect arch
-    ARCH=$(uname -m)
-    if [ "$ARCH" = "aarch64" ]; then
-        URL="https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_aarch64.tar.gz"
-    else
-        URL="https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz"
-    fi
-    curl -L -O "$URL"
-    tar xzf *.tar.gz
-    cd ..
-fi
-
-# 4. Check for Goose Binary
+# 3. Check for Goose Binary
 if [ ! -f "goose-bin" ]; then
     echo "Goose binary not found. Please ensure 'goose-bin' is present in the root."
     echo "You might need to build it using: docker build -t goose-cli goose/ && docker create --name temp goose-cli && docker cp temp:/usr/local/bin/goose ./goose-bin && docker rm temp"
