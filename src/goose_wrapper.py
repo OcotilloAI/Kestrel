@@ -4,6 +4,7 @@ import queue
 import re
 import time
 import sys
+import os
 
 class GooseWrapper:
     def __init__(self, executable="./goose-bin"):
@@ -13,11 +14,16 @@ class GooseWrapper:
         self.running = False
         self.read_thread = None
 
-    def start(self):
+    def start(self, cwd=None):
         cmd = [self.executable, "session"]
         
+        # Determine working directory
+        work_dir = cwd if cwd else os.getcwd()
+        print(f"Starting Goose in: {work_dir}", file=sys.stderr)
+
         self.process = subprocess.Popen(
             cmd,
+            cwd=work_dir,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -34,6 +40,12 @@ class GooseWrapper:
         self.stderr_thread = threading.Thread(target=self._read_stderr)
         self.stderr_thread.daemon = True
         self.stderr_thread.start()
+
+    def restart(self, cwd=None):
+        self.stop()
+        time.sleep(1) # Give it a moment to release resources
+        self.output_queue = queue.Queue() # Clear old output
+        self.start(cwd)
 
     def _read_stdout(self):
         while self.running and self.process.poll() is None:
