@@ -138,6 +138,25 @@ export const useSessions = () => {
         }
     };
 
+    const createBranch = async (projectName: string, branchName?: string) => {
+        try {
+            const res = await fetch(`/project/${encodeURIComponent(projectName)}/branch`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: branchName || null }),
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || 'Failed to create branch');
+            }
+            await fetchSessions();
+            await fetchProjects();
+        } catch (err: any) {
+            setError(err.message);
+            throw err;
+        }
+    };
+
     useEffect(() => {
         fetchSessions();
         fetchProjects();
@@ -151,6 +170,7 @@ export const useSessions = () => {
         deleteSession,
         deleteBranch,
         deleteProject,
+        createBranch,
         fetchSessions,
         isLoading,
         hasLoaded,

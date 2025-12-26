@@ -5,7 +5,6 @@ import { InputArea } from './components/InputArea';
 import { Login } from './components/Login';
 import { useSessions } from './hooks/useSessions';
 import { useChat } from './hooks/useChat';
-import { useMediaQuery } from './hooks/useMediaQuery';
 import { Button } from 'react-bootstrap';
 import { FaBars } from 'react-icons/fa';
 import 'bootstrap/dist/css/bootstrap.min.css';
@@ -18,10 +17,10 @@ function App() {
     // UI State
     const [showMobileSidebar, setShowMobileSidebar] = useState(false);
     const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(false);
-    const isDesktop = useMediaQuery('(min-width: 992px)');
+    const [isDesktop] = useState(() => window.matchMedia('(min-width: 768px)').matches);
 
     // Data Hooks
-    const { sessions, activeSessionId, setActiveSessionId, createSession, deleteBranch, deleteProject, isLoading: sessionsLoading, hasLoaded: sessionsLoaded, projects, projectsLoaded } = useSessions();
+    const { sessions, activeSessionId, setActiveSessionId, createSession, deleteBranch, deleteProject, createBranch, isLoading: sessionsLoading, hasLoaded: sessionsLoaded, projects, projectsLoaded } = useSessions();
     const { messages, status, sendMessage, isProcessing, stopSpeaking, speakText } = useChat(
         isAuthenticated ? activeSessionId : null,
         () => setActiveSessionId(null)
@@ -96,7 +95,7 @@ function App() {
     }
 
     return (
-        <div className="d-flex app-root overflow-hidden">
+        <div className={`d-flex app-root overflow-hidden ${isDesktop ? '' : 'mobile-layout'}`}>
             {isDesktop ? (
                 <Sidebar 
                     isCollapsed={isDesktopSidebarCollapsed}
@@ -107,6 +106,7 @@ function App() {
                     onCreateSession={createSession}
                     onDeleteBranch={deleteBranch}
                     onDeleteProject={deleteProject}
+                    onCreateBranch={createBranch}
                     onDuplicateSession={(id) => {
                         const s = sessions.find(s => s.id === id);
                         if(s) createSession(undefined, s.cwd);
@@ -114,8 +114,16 @@ function App() {
                 />
             ) : (
                 <>
-                    <div className="position-absolute top-0 start-0 p-2" style={{ zIndex: 1050 }}>
-                        <Button variant="light" onClick={() => setShowMobileSidebar(true)}><FaBars /></Button>
+                    <div className="mobile-topbar">
+                        <Button
+                            variant="light"
+                            className="mobile-menu-btn"
+                            onClick={() => setShowMobileSidebar(prev => !prev)}
+                            aria-label="Toggle sidebar"
+                        >
+                            <FaBars />
+                        </Button>
+                        <div className="mobile-title">Kestrel</div>
                     </div>
                     <Sidebar 
                         isOffcanvas
@@ -127,6 +135,7 @@ function App() {
                         onCreateSession={(cwd) => { createSession(cwd); setShowMobileSidebar(false); }}
                         onDeleteBranch={deleteBranch}
                         onDeleteProject={deleteProject}
+                        onCreateBranch={createBranch}
                         onDuplicateSession={(id) => {
                             const s = sessions.find(s => s.id === id);
                             if(s) createSession(undefined, s.cwd);
@@ -136,7 +145,7 @@ function App() {
                 </>
             )}
 
-            <div className="d-flex flex-column flex-grow-1" style={{minWidth: 0}}>
+            <div className="d-flex flex-column flex-grow-1 content-pane" style={{minWidth: 0}}>
                 <ChatArea 
                     messages={messages} 
                     status={status} 

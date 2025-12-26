@@ -35,6 +35,10 @@ class RenameConfig(BaseModel):
 
 class SummarizeRequest(BaseModel):
     text: str
+
+class BranchConfig(BaseModel):
+    name: Optional[str] = None
+    source_branch: Optional[str] = "main"
 # ---------------------
 
 # Global Session Manager
@@ -100,6 +104,18 @@ async def delete_project(project_name: str):
     if manager.delete_project(project_name):
         return {"status": "deleted", "project": project_name}
     raise HTTPException(status_code=404, detail="Project not found")
+
+@app.post("/project/{project_name}/branch")
+async def create_branch(project_name: str, config: BranchConfig):
+    try:
+        branch_name = manager.create_branch(
+            project_name=project_name,
+            branch_name=config.name,
+            source_branch=config.source_branch or "main",
+        )
+        return {"status": "created", "project": project_name, "branch": branch_name}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/project/{project_name}/branch/{branch_name}")
 async def delete_branch(project_name: str, branch_name: str):

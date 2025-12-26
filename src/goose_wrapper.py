@@ -28,6 +28,8 @@ class GooseWrapper:
         # Set environment variables for the subprocess
         env = os.environ.copy()
         env["GOOSE_ALLOW_UNSTABLE"] = "1"
+        self._apply_gooseenv_file(env, work_dir)
+        self._apply_venv_env(env, work_dir)
 
         self.process = subprocess.Popen(
             cmd,
@@ -94,6 +96,36 @@ class GooseWrapper:
     def _clean_ansi(self, text):
         ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|[\[0-?]*[@-~])')
         return ansi_escape.sub('', text)
+
+    def _apply_venv_env(self, env, work_dir):
+        venv_path = env.get("GOOSE_VENV")
+        if not venv_path:
+            for candidate in (".venv", "venv"):
+                candidate_path = os.path.join(work_dir, candidate)
+                if os.path.isdir(candidate_path):
+                    venv_path = candidate_path
+                    break
+        if not venv_path:
+            return
+
+        venv_bin = os.path.join(venv_path, "bin")
+        env["VIRTUAL_ENV"] = venv_path
+        env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
+
+    def _apply_gooseenv_file(self, env, work_dir):
+        env_path = os.path.join(work_dir, ".gooseenv")
+        if not os.path.isfile(env_path):
+            return
+        try:
+            with open(env_path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    env[key.strip()] = value.strip()
+        except Exception:
+            return
 
     def is_alive(self):
         return self.process is not None and self.process.poll() is None

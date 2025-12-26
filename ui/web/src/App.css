@@ -39,9 +39,61 @@
 }
 
 .app-root {
-    height: var(--app-height, 100vh);
-    min-height: 100vh;
+    height: var(--app-height, 100dvh);
+    min-height: 100dvh;
     padding-top: env(safe-area-inset-top);
     padding-bottom: env(safe-area-inset-bottom);
     box-sizing: border-box;
+}
+
+.mobile-layout {
+    flex-direction: column;
+}
+
+.mobile-topbar {
+    height: calc(48px + env(safe-area-inset-top));
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: env(safe-area-inset-top) 12px 0 12px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    z-index: 1200;
+}
+
+.mobile-menu-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.mobile-title {
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+.content-pane {
+    min-height: 0;
+}
+
+.sidebar-offcanvas .offcanvas {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+}
+
+.sidebar-offcanvas .offcanvas-body {
+    padding: 0;
+    overflow-y: auto;
+}
+
+.sidebar-offcanvas .sidebar-container {
+    width: 100%;
+    height: 100%;
 }

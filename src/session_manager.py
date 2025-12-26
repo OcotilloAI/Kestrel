@@ -68,6 +68,7 @@ class SessionManager:
                 # Configure user for this repo to allow commits
                 subprocess.run(["git", "config", "user.email", "kestrel@ocotillo.ai"], cwd=final_cwd, check=True)
                 subprocess.run(["git", "config", "user.name", "Kestrel Agent"], cwd=final_cwd, check=True)
+                subprocess.run(["git", "checkout", "-b", branch_name], cwd=final_cwd, check=True)
             except subprocess.CalledProcessError as e:
                 self.logger.error(f"Git clone failed: {e}")
                 # Fallback to copy if not a git repo?
@@ -100,6 +101,10 @@ class SessionManager:
                 root_hints = self.workdir_root / ".goosehints"
                 if root_hints.exists():
                     shutil.copy2(root_hints, final_cwd / ".goosehints")
+
+                root_env = self.workdir_root / ".gooseenv"
+                if root_env.exists():
+                    shutil.copy2(root_env, final_cwd / ".gooseenv")
                     
                 # Initial Commit
                 subprocess.run(["git", "add", "."], cwd=final_cwd, check=True)
@@ -111,6 +116,9 @@ class SessionManager:
         # Ensure directory exists (redundant for new logic but safe)
         if not final_cwd.exists():
             final_cwd.mkdir(parents=True, exist_ok=True)
+
+        self._ensure_goosehints(final_cwd)
+        self._ensure_gooseenv(final_cwd)
 
         wrapper = GooseWrapper()
         
@@ -137,6 +145,18 @@ class SessionManager:
                 shutil.copytree(item, dest_path, dirs_exist_ok=True)
             else:
                 shutil.copy2(item, dest_path)
+
+    def _ensure_goosehints(self, target_dir: Path):
+        hints_src = self.workdir_root / ".goosehints"
+        hints_dst = target_dir / ".goosehints"
+        if hints_src.exists() and not hints_dst.exists():
+            shutil.copy2(hints_src, hints_dst)
+
+    def _ensure_gooseenv(self, target_dir: Path):
+        env_src = self.workdir_root / ".gooseenv"
+        env_dst = target_dir / ".gooseenv"
+        if env_src.exists() and not env_dst.exists():
+            shutil.copy2(env_src, env_dst)
 
     def get_session(self, session_id: str) -> Optional[GooseWrapper]:
         """Retrieve an active session by ID."""
@@ -175,6 +195,30 @@ class SessionManager:
         shutil.rmtree(project_dir)
         self.logger.info(f"Deleted project {project_name}")
         return True
+
+    def create_branch(self, project_name: str, branch_name: Optional[str] = None, source_branch: str = "main") -> str:
+        project_dir = self.workdir_root / project_name
+        source_dir = project_dir / source_branch
+        if not source_dir.exists():
+            raise ValueError(f"Source branch {source_branch} does not exist")
+
+        branch_name = branch_name or generate_name()
+        branch_dir = project_dir / branch_name
+        if branch_dir.exists():
+            raise ValueError(f"Destination path {branch_dir} already exists")
+
+        try:
+            subprocess.run(["git", "clone", str(source_dir), str(branch_dir)], check=True)
+            subprocess.run(["git", "config", "user.email", "kestrel@ocotillo.ai"], cwd=branch_dir, check=True)
+            subprocess.run(["git", "config", "user.name", "Kestrel Agent"], cwd=branch_dir, check=True)
+            subprocess.run(["git", "checkout", "-b", branch_name], cwd=branch_dir, check=True)
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Branch clone failed: {e}")
+            raise
+
+        self._ensure_goosehints(branch_dir)
+        self._ensure_gooseenv(branch_dir)
+        return branch_name
 
     def delete_branch(self, project_name: str, branch_name: str) -> bool:
         """Delete a branch directory inside a project."""

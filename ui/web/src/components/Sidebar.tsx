@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { Session } from '../types';
 import { Button, ListGroup, Offcanvas, Dropdown, ButtonGroup, Form } from 'react-bootstrap';
 import { FaTrash, FaCopy, FaChevronLeft, FaChevronRight, FaFolderPlus } from 'react-icons/fa';
@@ -12,6 +12,7 @@ interface SidebarProps {
     onCreateSession: (cwd?: string, copyFrom?: string) => void;
     onDeleteBranch: (id: string) => void;
     onDeleteProject: (projectName: string) => void;
+    onCreateBranch: (projectName: string, branchName?: string) => void;
     onDuplicateSession: (id: string) => void; // This is now Clone Branch
     // Responsive props
     isOffcanvas?: boolean;
@@ -23,7 +24,8 @@ interface SidebarProps {
 
 
 export const Sidebar: React.FC<SidebarProps> = (props) => {
-    const { sessions, activeSessionId, onSelectSession, onCreateSession, onDeleteBranch, onDeleteProject, onDuplicateSession } = props;
+    const { sessions, activeSessionId, onSelectSession, onCreateSession, onDeleteBranch, onDeleteProject, onCreateBranch, onDuplicateSession } = props;
+    const [newBranchName, setNewBranchName] = useState('');
 
     // Group sessions into projects
     const { projects, activeProjectName } = useMemo(() => {
@@ -64,12 +66,18 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
         }
     };
 
+    const handleCreateBranch = () => {
+        if (!currentProjectName) return;
+        const trimmed = newBranchName.trim();
+        onCreateBranch(currentProjectName, trimmed || undefined);
+        setNewBranchName('');
+    };
+
     const content = (
         <div className={`sidebar-container bg-light border-end ${props.isCollapsed ? 'collapsed' : ''}`}>
             {/* Header */}
             <div className="sidebar-header p-3 border-bottom d-flex justify-content-between align-items-center">
                 {!props.isCollapsed && <h5 className="mb-0">Kestrel</h5>}
-                {props.isOffcanvas && <Button variant="close" onClick={props.onHide} />}
                 {!props.isOffcanvas && (
                     <Button variant="outline-secondary" size="sm" onClick={props.onToggleCollapse} className="toggle-btn">
                         {props.isCollapsed ? <FaChevronRight /> : <FaChevronLeft />}
@@ -106,6 +114,18 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                 {/* Branch List */}
                 <div className="flex-grow-1 overflow-auto p-3">
                     <div className="small text-muted text-uppercase fw-bold mb-2">Branches</div>
+                    <div className="d-flex gap-2 mb-3">
+                        <Form.Control
+                            size="sm"
+                            placeholder="New branch name (optional)"
+                            value={newBranchName}
+                            onChange={(e) => setNewBranchName(e.target.value)}
+                            disabled={!currentProjectName}
+                        />
+                        <Button size="sm" variant="outline-primary" onClick={handleCreateBranch} disabled={!currentProjectName}>
+                            Create
+                        </Button>
+                    </div>
                     <ListGroup variant="flush">
                         {activeProject?.branches.map(branch => (
                             <ListGroup.Item 
@@ -137,7 +157,19 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
     );
 
     if (props.isOffcanvas) {
-        return <Offcanvas show={props.show} onHide={props.onHide} placement="start">{content}</Offcanvas>;
+        return (
+            <Offcanvas
+                className="sidebar-offcanvas"
+                show={props.show}
+                onHide={props.onHide}
+                placement="start"
+                backdrop={false}
+                keyboard={false}
+                scroll
+            >
+                {content}
+            </Offcanvas>
+        );
     }
     return content;
 };
