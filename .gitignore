@@ -12,6 +12,7 @@ goose-bin
 piper-bin/
 piper-data/
 workdir/
+workspace/
 
 # Logs
 *.log

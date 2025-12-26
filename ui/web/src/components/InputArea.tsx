@@ -1,18 +1,39 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Button, Form, InputGroup, Dropdown, DropdownButton } from 'react-bootstrap';
+import { Button, Form, InputGroup, Dropdown, DropdownButton, Spinner } from 'react-bootstrap';
 import { FaPaperPlane, FaMicrophone, FaStop } from 'react-icons/fa';
 import type { SessionMode } from '../types';
 
 interface InputAreaProps {
     onSend: (text: string, mode: SessionMode) => void;
+    onInteraction?: () => void;
     disabled?: boolean;
+    isProcessing?: boolean;
 }
 
-export const InputArea: React.FC<InputAreaProps> = ({ onSend, disabled }) => {
+export const InputArea: React.FC<InputAreaProps> = ({ onSend, onInteraction, disabled, isProcessing }) => {
     const [text, setText] = useState('');
     const [isListening, setIsListening] = useState(false);
     const [mode, setMode] = useState<SessionMode>('continue');
     const recognitionRef = useRef<any>(null);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    // Auto-resize textarea
+    useEffect(() => {
+        if (textareaRef.current) {
+            // Reset height to allow shrinking
+            textareaRef.current.style.height = '50px';
+            const scrollHeight = textareaRef.current.scrollHeight;
+            const maxHeight = window.innerHeight * 0.75;
+            textareaRef.current.style.height = `${Math.min(scrollHeight, maxHeight)}px`;
+        }
+    }, [text]);
+
+    useEffect(() => {
+        if (isProcessing && isListening) {
+            setIsListening(false);
+            recognitionRef.current?.stop();
+        }
+    }, [isProcessing, isListening]);
 
     useEffect(() => {
         // Init speech recognition
@@ -67,12 +88,14 @@ export const InputArea: React.FC<InputAreaProps> = ({ onSend, disabled }) => {
             setIsListening(false);
             recognitionRef.current.stop();
         } else {
+            onInteraction?.();
             setIsListening(true);
             recognitionRef.current.start();
         }
     };
 
     const handleSend = () => {
+        onInteraction?.();
         if (!text.trim()) return;
         onSend(text, mode);
         setText('');
@@ -105,11 +128,21 @@ export const InputArea: React.FC<InputAreaProps> = ({ onSend, disabled }) => {
             <InputGroup>
                 <Form.Control
                     as="textarea"
+                    ref={textareaRef}
                     placeholder="Type a message..."
                     value={text}
-                    onChange={(e) => setText(e.target.value)}
+                    onChange={(e) => {
+                        setText(e.target.value);
+                        onInteraction?.();
+                    }}
                     onKeyDown={handleKeyDown}
-                    style={{ borderRadius: '20px', resize: 'none', height: '50px' }}
+                    style={{ 
+                        borderRadius: '20px', 
+                        resize: 'none', 
+                        height: '50px',
+                        maxHeight: '75vh',
+                        overflowY: 'auto'
+                    }}
                     disabled={disabled}
                 />
                 <Button 
@@ -127,9 +160,9 @@ export const InputArea: React.FC<InputAreaProps> = ({ onSend, disabled }) => {
                     className="rounded-circle ms-2 d-flex align-items-center justify-content-center"
                     style={{ width: '50px', height: '50px' }}
                     onClick={handleSend}
-                    disabled={disabled || !text.trim()}
+                    disabled={disabled || !text.trim() || isProcessing}
                 >
-                    <FaPaperPlane />
+                    {isProcessing ? <Spinner animation="border" size="sm" /> : <FaPaperPlane />}
                 </Button>
             </InputGroup>
         </div>

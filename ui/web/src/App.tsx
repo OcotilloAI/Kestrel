@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { ChatArea } from './components/ChatArea';
 import { InputArea } from './components/InputArea';
+import { Login } from './components/Login';
 import { useSessions } from './hooks/useSessions';
 import { useChat } from './hooks/useChat';
 import type { SessionMode } from './types';
@@ -9,22 +10,47 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 import './App.css';
 
 function App() {
+    const [isAuthenticated, setIsAuthenticated] = useState(() => {
+        return localStorage.getItem('kestrel_auth') === 'true';
+    });
+
     const { 
         sessions, 
         activeSessionId, 
         setActiveSessionId, 
         createSession, 
-        deleteSession 
+        deleteSession,
+        isLoading 
     } = useSessions();
     
-    const { messages, status, sendMessage } = useChat(activeSessionId);
+    const { 
+        messages, 
+        status, 
+        sendMessage, 
+        isProcessing, 
+        stopSpeaking, 
+        speakText 
+    } = useChat(isAuthenticated ? activeSessionId : null);
     
-    // Auto-select first session on load if none selected
+    // Auto-start session if none exist
     useEffect(() => {
-        if (!activeSessionId && sessions.length > 0) {
+        if (!isAuthenticated) return;
+        
+        if (!isLoading && sessions.length === 0 && !activeSessionId) {
+             createSession('/workspace').then(id => setActiveSessionId(id)).catch(console.error);
+        } else if (!activeSessionId && sessions.length > 0) {
             setActiveSessionId(sessions[0].id);
         }
-    }, [sessions, activeSessionId, setActiveSessionId]);
+    }, [sessions, activeSessionId, setActiveSessionId, isLoading, createSession, isAuthenticated]);
+
+    const handleLogin = () => {
+        setIsAuthenticated(true);
+        localStorage.setItem('kestrel_auth', 'true');
+    };
+
+    if (!isAuthenticated) {
+        return <Login onLogin={handleLogin} />;
+    }
 
     const handleSend = async (text: string, mode: SessionMode) => {
         if (mode === 'new') {
@@ -87,8 +113,13 @@ function App() {
                 }}
             />
             <div className="d-flex flex-column flex-grow-1" style={{minWidth: 0}}>
-                <ChatArea messages={messages} status={status} />
-                <InputArea onSend={handleSend} disabled={status !== 'connected' && sessions.length > 0} />
+                <ChatArea messages={messages} status={status} onSpeak={speakText} />
+                <InputArea 
+                    onSend={handleSend} 
+                    onInteraction={stopSpeaking}
+                    disabled={status !== 'connected' && sessions.length > 0} 
+                    isProcessing={isProcessing} 
+                />
             </div>
         </div>
     );

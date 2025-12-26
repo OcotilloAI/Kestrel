@@ -20,7 +20,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     onDeleteSession,
     onDuplicateSession
 }) => {
-    const [cwd, setCwd] = useState('/app/workdir');
+    const [cwd, setCwd] = useState('/workspace');
 
     return (
         <div className="d-flex flex-column h-100 bg-light border-end" style={{ width: '280px', minWidth: '280px' }}>

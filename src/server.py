@@ -35,8 +35,11 @@ if os.path.exists(dist_dir):
 
 @app.get("/")
 async def get():
-    if os.path.exists(os.path.join(dist_dir, "index.html")):
-        return FileResponse(os.path.join(dist_dir, "index.html"))
+    path = os.path.join(dist_dir, "index.html")
+    if os.path.exists(path):
+        print(f"Serving frontend from: {path}")
+        return FileResponse(path)
+    print(f"Frontend build not found at {path}, falling back to legacy")
     return FileResponse('static/index.html') # Fallback if build missing
 
 @app.get("/sessions")

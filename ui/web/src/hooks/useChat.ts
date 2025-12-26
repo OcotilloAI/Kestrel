@@ -1,34 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Message } from '../types';
 import { v4 as uuidv4 } from 'uuid';
+import { cleanTextForTTS } from '../utils/textProcessing';
 
 export const useChat = (sessionId: string | null) => {
     const [messages, setMessages] = useState<Message[]>([]);
     const [status, setStatus] = useState<'connected' | 'disconnected' | 'connecting'>('disconnected');
+    const [isProcessing, setIsProcessing] = useState(false);
     const socketRef = useRef<WebSocket | null>(null);
     const synth = window.speechSynthesis;
-    const inCodeBlockRef = useRef(false);
+    const ttsBufferRef = useRef<string>("");
 
     const speak = useCallback((text: string) => {
-        if (!text.trim()) return;
-
-        // Simple markdown cleaning for speech
-        // Toggle code block state
-        if (text.trim().startsWith("```")) {
-            inCodeBlockRef.current = !inCodeBlockRef.current;
-            return; // Don't speak the fence line
-        }
-
-        if (inCodeBlockRef.current) {
-            return; // Don't speak code
-        }
-
-        let cleanText = text
-            .replace(/^[#\-*]+ /g, '') // Remove starting bullets/headers
-            .replace(/[*_`]/g, '')     // Remove formatting chars
-            .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1'); // Links -> Text
-
-        if (!cleanText.trim()) return;
+        const cleanText = cleanTextForTTS(text);
+        if (!cleanText) return;
 
         const utterance = new SpeechSynthesisUtterance(cleanText);
         utterance.rate = 1.0;
@@ -60,16 +45,40 @@ export const useChat = (sessionId: string | null) => {
         socket.onmessage = (event) => {
             const text = event.data;
             if (text.startsWith("G: ")) {
+                setIsProcessing(false);
                 const msgContent = text.substring(3);
                 if (msgContent.startsWith("[LOG]")) {
                     console.log("Backend Log:", msgContent);
                     return;
                 }
                 
-                // Speak the chunk
-                speak(msgContent);
+                // Buffer and Speak
+                ttsBufferRef.current += msgContent;
+                
+                // Find last sentence boundary
+                // Look for . ! ? followed by space or newline
+                // We regex search for the *last* occurrence to split safely
+                // Actually, just find *any* sentence boundary and speak up to it
+                // to keep latency low.
+                
+                let buffer = ttsBufferRef.current;
+                // Regex: punctuation followed by whitespace
+                const sentenceRegex = /([.!?]+)(\s+)/g;
+                let lastIndex = 0;
+                
+                // Find all sentences
+                while (sentenceRegex.exec(buffer) !== null) {
+                    const sentence = buffer.substring(lastIndex, sentenceRegex.lastIndex);
+                    speak(sentence);
+                    lastIndex = sentenceRegex.lastIndex;
+                }
+                
+                // Keep the remainder in buffer
+                if (lastIndex > 0) {
+                    ttsBufferRef.current = buffer.substring(lastIndex);
+                }
 
-                // Stream handling
+                // Stream handling for UI
                 setMessages(prev => {
                     const last = prev[prev.length - 1];
                     if (last && last.role === 'agent') {
@@ -122,15 +131,22 @@ export const useChat = (sessionId: string | null) => {
         }]);
     };
 
+    const stopSpeaking = useCallback(() => {
+        synth.cancel();
+        ttsBufferRef.current = "";
+    }, [synth]);
+
     const sendMessage = useCallback((text: string) => {
         if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+            setIsProcessing(true);
+            stopSpeaking();
             socketRef.current.send(text);
             addMessage('user', text);
         } else {
             console.warn("Socket not connected");
             addMessage('agent', "Error: Not connected.");
         }
-    }, []);
+    }, [stopSpeaking]);
 
-    return { messages, status, sendMessage };
+    return { messages, status, sendMessage, isProcessing, stopSpeaking, speakText: speak };
 };
