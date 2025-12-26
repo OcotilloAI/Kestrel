@@ -5,6 +5,9 @@ export const useSessions = () => {
     const [sessions, setSessions] = useState<Session[]>([]);
     const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [hasLoaded, setHasLoaded] = useState(false);
+    const [projects, setProjects] = useState<string[]>([]);
+    const [projectsLoaded, setProjectsLoaded] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     const fetchSessions = useCallback(async () => {
@@ -18,6 +21,7 @@ export const useSessions = () => {
             setError(err.message);
         } finally {
             setIsLoading(false);
+            setHasLoaded(true);
         }
     }, []);
 
@@ -52,8 +56,35 @@ export const useSessions = () => {
         }
     };
 
+    const fetchProjects = useCallback(async () => {
+        try {
+            const res = await fetch('/projects');
+            if (!res.ok) throw new Error('Failed to fetch projects');
+            const data = await res.json();
+            setProjects(data);
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setProjectsLoaded(true);
+        }
+    }, []);
+
+    const getProjectAndBranch = (session: Session) => {
+        const nameParts = session.name.split('/');
+        if (nameParts.length >= 2) {
+            return { project: nameParts[0], branch: nameParts[1] };
+        }
+        if (session.cwd) {
+            const cwdParts = session.cwd.replace(/\\/g, '/').split('/').filter(Boolean);
+            if (cwdParts.length >= 2) {
+                return { project: cwdParts[cwdParts.length - 2], branch: cwdParts[cwdParts.length - 1] };
+            }
+        }
+        return null;
+    };
+
     const deleteSession = async (sessionId: string) => {
-         try {
+        try {
             const res = await fetch(`/session/${sessionId}`, { method: 'DELETE' });
             if (!res.ok) throw new Error('Failed to delete session');
             await fetchSessions();
@@ -65,9 +96,52 @@ export const useSessions = () => {
         }
     };
 
+    const deleteBranch = async (sessionId: string) => {
+        const session = sessions.find(s => s.id === sessionId);
+        if (!session) {
+            setError('Session not found');
+            return;
+        }
+        const projectBranch = getProjectAndBranch(session);
+        if (!projectBranch) {
+            setError('Unable to determine project/branch');
+            return;
+        }
+        try {
+            const res = await fetch(
+                `/project/${encodeURIComponent(projectBranch.project)}/branch/${encodeURIComponent(projectBranch.branch)}`,
+                { method: 'DELETE' }
+            );
+            if (!res.ok) throw new Error('Failed to delete branch');
+            await fetchSessions();
+            await fetchProjects();
+            if (activeSessionId === sessionId) {
+                setActiveSessionId(null);
+            }
+        } catch (err: any) {
+            setError(err.message);
+        }
+    };
+
+    const deleteProject = async (projectName: string) => {
+        try {
+            const res = await fetch(`/project/${encodeURIComponent(projectName)}`, { method: 'DELETE' });
+            if (!res.ok) throw new Error('Failed to delete project');
+            const activeSession = sessions.find(s => s.id === activeSessionId);
+            if (activeSession?.name.startsWith(`${projectName}/`)) {
+                setActiveSessionId(null);
+            }
+            await fetchSessions();
+            await fetchProjects();
+        } catch (err: any) {
+            setError(err.message);
+        }
+    };
+
     useEffect(() => {
         fetchSessions();
-    }, [fetchSessions]);
+        fetchProjects();
+    }, [fetchSessions, fetchProjects]);
 
     return {
         sessions,
@@ -75,8 +149,13 @@ export const useSessions = () => {
         setActiveSessionId,
         createSession,
         deleteSession,
+        deleteBranch,
+        deleteProject,
         fetchSessions,
         isLoading,
+        hasLoaded,
+        projects,
+        projectsLoaded,
         error
     };
 };

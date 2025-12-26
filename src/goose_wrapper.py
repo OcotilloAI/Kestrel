@@ -25,6 +25,10 @@ class GooseWrapper:
         work_dir = cwd if cwd else os.getcwd()
         print(f"Starting Goose in: {work_dir}", file=sys.stderr)
 
+        # Set environment variables for the subprocess
+        env = os.environ.copy()
+        env["GOOSE_ALLOW_UNSTABLE"] = "1"
+
         self.process = subprocess.Popen(
             cmd,
             cwd=work_dir,
@@ -32,7 +36,8 @@ class GooseWrapper:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            bufsize=1  # Line buffered
+            bufsize=1,  # Line buffered
+            env=env
         )
         self.running = True
         
@@ -52,32 +57,19 @@ class GooseWrapper:
         self.start(cwd)
 
     def _read_stdout(self):
-        while self.running:
-            try:
-                # Read raw bytes unbuffered
-                data = os.read(self.process.stdout.fileno(), 1024)
-                if not data:
-                    if self.process.poll() is not None:
-                        break
-                    time.sleep(0.01)
-                    continue
-                
-                text = data.decode('utf-8', errors='replace')
-                self.output_queue.put(text)
-            except Exception:
+        # Use line buffering provided by the file object
+        for line in iter(self.process.stdout.readline, ''):
+            if self.running:
+                self.output_queue.put(line)
+            else:
                 break
 
     def _read_stderr(self):
-        while self.running and self.process.poll() is None:
-            try:
-                line = self.process.stderr.readline()
-                if line:
-                    # Capture stderr for logs/status
-                    self.output_queue.put(f"[LOG] {line}")
-                else:
-                    if self.process.poll() is not None:
-                        break
-            except Exception:
+        for line in iter(self.process.stderr.readline, ''):
+            if self.running:
+                # Capture stderr for logs/status
+                self.output_queue.put(f"[LOG] {line}")
+            else:
                 break
 
     def send_input(self, text):

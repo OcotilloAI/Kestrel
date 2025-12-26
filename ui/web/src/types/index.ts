@@ -7,7 +7,7 @@ export interface Session {
 
 export interface Message {
     id: string;
-    role: 'user' | 'agent';
+    role: 'user' | 'agent' | 'system';
     content: string;
     timestamp: number;
 }

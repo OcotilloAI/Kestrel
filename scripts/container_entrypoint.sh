@@ -45,10 +45,12 @@ GOOSE_MODEL: $MODEL_NAME
 GOOSE_MODE: auto
 extensions:
   developer:
-    bundled: true
     enabled: true
     name: developer
-    timeout: 300
+    type: builtin
+  extensionmanager:
+    enabled: true
+    name: extensionmanager
     type: builtin
 EOF
 fi

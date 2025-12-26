@@ -1,48 +1,91 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { ChatArea } from './components/ChatArea';
 import { InputArea } from './components/InputArea';
 import { Login } from './components/Login';
 import { useSessions } from './hooks/useSessions';
 import { useChat } from './hooks/useChat';
-import type { SessionMode } from './types';
+import { useMediaQuery } from './hooks/useMediaQuery';
+import { Button } from 'react-bootstrap';
+import { FaBars } from 'react-icons/fa';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import './App.css';
 
 function App() {
-    const [isAuthenticated, setIsAuthenticated] = useState(() => {
-        return localStorage.getItem('kestrel_auth') === 'true';
-    });
+    // Auth State
+    const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('kestrel_auth') === 'true');
+    
+    // UI State
+    const [showMobileSidebar, setShowMobileSidebar] = useState(false);
+    const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(false);
+    const isDesktop = useMediaQuery('(min-width: 992px)');
 
-    const { 
-        sessions, 
-        activeSessionId, 
-        setActiveSessionId, 
-        createSession, 
-        deleteSession,
-        isLoading 
-    } = useSessions();
-    
-    const { 
-        messages, 
-        status, 
-        sendMessage, 
-        isProcessing, 
-        stopSpeaking, 
-        speakText 
-    } = useChat(isAuthenticated ? activeSessionId : null);
-    
-    // Auto-start session if none exist
+    // Data Hooks
+    const { sessions, activeSessionId, setActiveSessionId, createSession, deleteBranch, deleteProject, isLoading: sessionsLoading, hasLoaded: sessionsLoaded, projects, projectsLoaded } = useSessions();
+    const { messages, status, sendMessage, isProcessing, stopSpeaking, speakText } = useChat(
+        isAuthenticated ? activeSessionId : null,
+        () => setActiveSessionId(null)
+    );
+
+    const activeSession = sessions.find(s => s.id === activeSessionId);
+
+    const didInitRef = useRef(false);
+
+    // Session Persistence and Initialization Logic
     useEffect(() => {
-        if (!isAuthenticated) return;
-        
-        if (!isLoading && sessions.length === 0 && !activeSessionId) {
-             createSession('/workspace').then(id => setActiveSessionId(id)).catch(console.error);
-        } else if (!activeSessionId && sessions.length > 0) {
-            setActiveSessionId(sessions[0].id);
+        if (sessionsLoading || !sessionsLoaded || !projectsLoaded || !isAuthenticated) return;
+        if (activeSessionId && !sessions.some(s => s.id === activeSessionId)) {
+            localStorage.removeItem('kestrel_active_session');
+            setActiveSessionId(null);
+            didInitRef.current = false;
+            return;
         }
-    }, [sessions, activeSessionId, setActiveSessionId, isLoading, createSession, isAuthenticated]);
+        if (didInitRef.current) return;
+        const lastActiveId = localStorage.getItem('kestrel_active_session');
+        const lastActiveCwd = localStorage.getItem('kestrel_active_session_cwd');
+        if (lastActiveId && sessions.some(s => s.id === lastActiveId)) {
+            if (activeSessionId !== lastActiveId) setActiveSessionId(lastActiveId);
+        } else if (sessions.length > 0 && !activeSessionId) {
+            if (lastActiveCwd) {
+                const matching = sessions.find(s => s.cwd === lastActiveCwd);
+                if (matching) {
+                    setActiveSessionId(matching.id);
+                } else {
+                    setActiveSessionId(sessions[0].id);
+                }
+            } else {
+                setActiveSessionId(sessions[0].id);
+            }
+        } else if (sessions.length === 0 && !activeSessionId && lastActiveCwd) {
+            createSession(lastActiveCwd).then(id => { if (id) setActiveSessionId(id); }).catch(() => {
+                localStorage.removeItem('kestrel_active_session_cwd');
+            });
+        } else if (sessions.length === 0 && !activeSessionId && projects.length === 0) {
+            createSession('.').then(id => { if (id) setActiveSessionId(id); }).catch(console.error);
+        }
+        didInitRef.current = true;
+    }, [sessions, activeSessionId, setActiveSessionId, sessionsLoading, sessionsLoaded, projectsLoaded, createSession, isAuthenticated, projects]);
 
+    useEffect(() => {
+        if (activeSessionId && sessions.some(s => s.id === activeSessionId)) {
+            localStorage.setItem('kestrel_active_session', activeSessionId);
+            const session = sessions.find(s => s.id === activeSessionId);
+            if (session?.cwd) {
+                localStorage.setItem('kestrel_active_session_cwd', session.cwd);
+            }
+        }
+    }, [activeSessionId, sessions]);
+
+    useEffect(() => {
+        const updateAppHeight = () => {
+            document.documentElement.style.setProperty('--app-height', `${window.innerHeight}px`);
+        };
+        updateAppHeight();
+        window.addEventListener('resize', updateAppHeight);
+        return () => window.removeEventListener('resize', updateAppHeight);
+    }, []);
+
+    // Handlers
     const handleLogin = () => {
         setIsAuthenticated(true);
         localStorage.setItem('kestrel_auth', 'true');
@@ -52,72 +95,59 @@ function App() {
         return <Login onLogin={handleLogin} />;
     }
 
-    const handleSend = async (text: string, mode: SessionMode) => {
-        if (mode === 'new') {
-            try {
-                const newId = await createSession('.');
-                setActiveSessionId(newId);
-                // Wait a bit for connection? The hook handles activeSessionId change.
-                // We might lose the first message if we send immediately before socket connects.
-                // Ideally we queue it, but for now let's just create and user types again or we wait.
-                // Improve: pass "initialPrompt" to createSession?
-            } catch(e) {
-                console.error(e);
-                alert("Failed to create new session");
-                return;
-            }
-        } else if (mode === 'duplicate') {
-             try {
-                const currentSession = sessions.find(s => s.id === activeSessionId);
-                if (!currentSession) return;
-                const newId = await createSession('.', currentSession.cwd);
-                setActiveSessionId(newId);
-             } catch(e) {
-                console.error(e);
-                 alert("Failed to duplicate session");
-                 return;
-             }
-        }
-        
-        // For 'continue' we just send. 
-        // Note: For new/duplicate, we need to wait for connection. 
-        // This logic is slightly flawed for "Send immediate after create".
-        // The original app did: Create -> Connect -> Send.
-        // Here `setActiveSessionId` triggers `useChat` to connect.
-        // We can't await that effect. 
-        // Solution: If mode changed session, we might drop the message or need a "pending message" state.
-        // For this MVP, let's assume 'continue' is default. If new/dup, we just switch and user types again?
-        // OR: We hack it by setting a "pendingMessage" state that useChat sends on connect.
-        
-        if (mode === 'continue') {
-             sendMessage(text);
-        } else {
-            // For now, just switch session. We lose the text if we don't handle it.
-            // Let's trying sending after a timeout? No, unreliable.
-            // Correct way: useChat accepts an "initialMessage" prop or similar.
-            alert("Switched session. Please send your message again.");
-        }
-    };
-
     return (
-        <div className="d-flex vh-100 overflow-hidden">
-            <Sidebar 
-                sessions={sessions}
-                activeSessionId={activeSessionId}
-                onSelectSession={setActiveSessionId}
-                onCreateSession={createSession}
-                onDeleteSession={deleteSession}
-                onDuplicateSession={(id) => {
-                     const s = sessions.find(s => s.id === id);
-                     if(s) createSession('.', s.cwd);
-                }}
-            />
+        <div className="d-flex app-root overflow-hidden">
+            {isDesktop ? (
+                <Sidebar 
+                    isCollapsed={isDesktopSidebarCollapsed}
+                    onToggleCollapse={() => setIsDesktopSidebarCollapsed(prev => !prev)}
+                    sessions={sessions}
+                    activeSessionId={activeSessionId}
+                    onSelectSession={setActiveSessionId}
+                    onCreateSession={createSession}
+                    onDeleteBranch={deleteBranch}
+                    onDeleteProject={deleteProject}
+                    onDuplicateSession={(id) => {
+                        const s = sessions.find(s => s.id === id);
+                        if(s) createSession(undefined, s.cwd);
+                    }}
+                />
+            ) : (
+                <>
+                    <div className="position-absolute top-0 start-0 p-2" style={{ zIndex: 1050 }}>
+                        <Button variant="light" onClick={() => setShowMobileSidebar(true)}><FaBars /></Button>
+                    </div>
+                    <Sidebar 
+                        isOffcanvas
+                        show={showMobileSidebar}
+                        onHide={() => setShowMobileSidebar(false)}
+                        sessions={sessions}
+                        activeSessionId={activeSessionId}
+                        onSelectSession={(id) => { setActiveSessionId(id); setShowMobileSidebar(false); }}
+                        onCreateSession={(cwd) => { createSession(cwd); setShowMobileSidebar(false); }}
+                        onDeleteBranch={deleteBranch}
+                        onDeleteProject={deleteProject}
+                        onDuplicateSession={(id) => {
+                            const s = sessions.find(s => s.id === id);
+                            if(s) createSession(undefined, s.cwd);
+                            setShowMobileSidebar(false);
+                        }}
+                    />
+                </>
+            )}
+
             <div className="d-flex flex-column flex-grow-1" style={{minWidth: 0}}>
-                <ChatArea messages={messages} status={status} onSpeak={speakText} />
+                <ChatArea 
+                    messages={messages} 
+                    status={status} 
+                    onSpeak={speakText} 
+                    isProcessing={isProcessing}
+                    sessionName={activeSession?.name}
+                />
                 <InputArea 
-                    onSend={handleSend} 
+                    onSend={(text) => sendMessage(text)} 
                     onInteraction={stopSpeaking}
-                    disabled={status !== 'connected' && sessions.length > 0} 
+                    disabled={status !== 'connected'} 
                     isProcessing={isProcessing} 
                 />
             </div>

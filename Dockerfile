@@ -12,12 +12,15 @@ FROM python:3.11-slim
 # Set unbuffered output for python
 ENV PYTHONUNBUFFERED=1
 
-# Install system dependencies
+# Install system dependencies (including Node.js for Goose extensions)
 RUN apt-get update && apt-get install -y \
     curl \
     tar \
     bzip2 \
     libxcb1 \
+    git \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -27,10 +30,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the local goose directory to access the install script
-COPY goose/download_cli.sh /tmp/install_goose.sh
-
 # Install Goose
+COPY goose/download_cli.sh /tmp/install_goose.sh
 ENV GOOSE_BIN_DIR=/usr/local/bin
 ENV CONFIGURE=false
 RUN chmod +x /tmp/install_goose.sh && /tmp/install_goose.sh
@@ -41,7 +42,6 @@ COPY --from=frontend-builder /app/ui/web/dist /app/ui/web/dist
 # Copy application code
 COPY src/ src/
 COPY scripts/ scripts/
-# Note: static/ is now fallback in server.py, can still copy it
 COPY static/ static/
 
 # Expose port

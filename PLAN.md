@@ -1,50 +1,29 @@
-# Kestrel Development Plan
+# Kestrel Plan
 
-**Goal:** Create a modern, web-based voice interface for the Goose agent that runs on various backends (Linux, Mac, Windows) and supports client-side audio processing (iOS, Android, Browser).
+## Goals
+- Improve session lifecycle stability (create/clone/delete, active session switching).
+- Stabilize UI behavior across iOS phone, iOS tablet, and Mac Safari/Chrome.
+- Reduce crash risk with better error handling and logging.
 
-## Current Status
-- [x] Project Initialization (License, Contributing, Git)
-- [x] Backend Refactor (FastAPI)
-- [x] Frontend Implementation (Web Speech API)
-- [x] Session & Context Management
+## Current Focus (Stability)
+- Fix clone fallback crash when source is not a git repo. (Issue #51)
+- Stop WebSocket reconnect loops after a session is deleted. (Issue #54)
+- Track and surface session creation/delete failures without crashing the server.
 
-## Roadmap
+## Session Lifecycle and Git Hygiene
+- Implement branch/project deletion with on-disk cleanup and confirmations. (Issue #52)
+- Decide and implement merge/delete semantics for branch repos (backlog; see Issue #41).
+- Guard against name collisions when creating branch folders and projects.
 
-### Phase 1: Foundation & Backend
-- **Objective:** Remove audio dependencies from the Python backend and expose Goose via a WebSocket API.
-- **Tasks:**
-    - [x] Create `src/server.py` using FastAPI.
-    - [x] Implement WebSocket endpoint `/ws` for bi-directional text streaming.
-    - [x] Update `GooseWrapper` to be robust and async-friendly if needed.
-    - [x] Update dependency management (remove `pydub`, `sounddevice`, add `fastapi`, `uvicorn`, `websockets`).
+## Device UX (iOS phone, iOS tablet, MacOS host)
+- Implement dynamic viewport handling and safe-area insets. (Issue #53)
+- Verify keyboard behavior and input visibility on iOS Safari.
+- Validate sidebar behavior and content density on iPad and Mac. (Issues #44, #45, #50)
 
-### Phase 2: Web Frontend (MVP)
-- **Objective:** A functional web interface for chatting with Goose using voice.
-- **Tasks:**
-    - [x] Create `static/index.html` (Legacy).
-    - [x] Refactor Frontend to React + TypeScript + Vite.
-    - [x] Implement STT using `window.SpeechRecognition`.
-    - [x] Implement TTS using `window.speechSynthesis`.
-    - [x] Build Chat UI:
-        - [x] Message history (scrolling).
-        - [x] Real-time input preview (non-scrolling).
-        - [x] System status indicator (Connecting, Thinking, etc.).
+## Observability and Tests
+- Add structured logs around session create/clone/delete and WS lifecycle.
+- Add a simple regression test to reproduce session create/delete crash.
 
-### Phase 3: Session Management & Advanced Features
-- **Objective:** Manage multiple independent sessions and contexts.
-- **Tasks:**
-    - [x] Add session ID handling in Backend.
-    - [x] Add UI sidebar for session switching.
-    - [x] Support switching "working directories" or git contexts via UI.
-
-## Active Issues & Backlog
-- **[Issue #1](https://github.com/OcotilloAI/Kestrel/issues/1): Integration Test Timeout**
-    - *Problem:* `test_basic.py` times out because the local `qwen3-coder:30b` model is too slow.
-    - *Status:* Closed.
-
-- **[Issue #2](https://github.com/OcotilloAI/Kestrel/issues/2): Concurrent Session Support**
-    - *Problem:* Backend currently uses a single global `GooseWrapper`. All users share the same session/CWD.
-    - *Goal:* Refactor `server.py` to map clients to independent Goose instances.
-
-## Issue Tracking
-All tasks and bugs are tracked in [GitHub Issues](https://github.com/OcotilloAI/Kestrel/issues).
+## Issue Map
+- Existing: #2, #3, #37, #39, #40, #41, #42, #43, #44, #45, #46, #47, #48, #49, #50
+- New: #51 (clone fallback crash), #52 (branch/project deletion), #53 (iOS/iPadOS viewport), #54 (WS reconnect loop), #55 (summarizer end-of-task recap)

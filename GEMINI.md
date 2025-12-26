@@ -6,6 +6,11 @@
 3. **Iterative Improvement**: Fix immediate blockers, then plan for architectural improvements.
 4. **Documentation**: Use GitHub Issues to track progress and `GEMINI.md` (this file) to capture operational rules.
 
+## Verification Mandates
+1.  **End-to-End Validation**: Before claiming success, thoroughly test both the UI and API endpoints to ensure full functionality.
+2.  **Semantic Correctness**: Crucially, verify that all responses (especially summarized content) are meaningful, coherent, and free from corruption.
+3.  **Automated Testing**: Leverage existing test structures and actively work towards incorporating automated UI (e.g., Playwright) and API tests.
+
 ## Issue Tracking Workflow
 1. **Identify**: Clearly state the problem or feature request.
 2. **Log**: Create a new issue in the GitHub repository using `gh issue create`.

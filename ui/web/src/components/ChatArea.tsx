@@ -8,9 +8,11 @@ interface ChatAreaProps {
     messages: Message[];
     status: string;
     onSpeak: (text: string) => void;
+    isProcessing?: boolean;
+    sessionName?: string;
 }
 
-export const ChatArea: React.FC<ChatAreaProps> = ({ messages, status, onSpeak }) => {
+export const ChatArea: React.FC<ChatAreaProps> = ({ messages, status, onSpeak, isProcessing, sessionName }) => {
     const bottomRef = useRef<HTMLDivElement>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
@@ -61,8 +63,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ messages, status, onSpeak })
     return (
         <div className="flex-grow-1 d-flex flex-column bg-light overflow-hidden">
              <div className="p-2 d-flex justify-content-between align-items-center border-bottom bg-white shadow-sm">
-                <div className="small text-muted">
-                    Status: <span className={status === 'connected' ? 'text-success' : 'text-danger'}>{status}</span>
+                <div className="small text-muted d-flex flex-column">
+                    <span>Status: <span className={status === 'connected' ? 'text-success' : 'text-danger'}>{status}</span></span>
+                    {sessionName && <span className="fw-bold text-dark">{sessionName}</span>}
                 </div>
                 
                 {pages.length > 1 && (
@@ -106,6 +109,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ messages, status, onSpeak })
                     {activePageMsgs.map(msg => (
                         <MessageBubble key={msg.id} message={msg} onSpeak={onSpeak} />
                     ))}
+                    {isProcessing && (
+                        <div className="text-muted small ms-2 fst-italic">
+                            <span className="spinner-grow spinner-grow-sm me-2" role="status" aria-hidden="true"></span>
+                            Kestrel is thinking...
+                        </div>
+                    )}
                 </div>
                 <div ref={bottomRef} />
             </div>

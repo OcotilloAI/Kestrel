@@ -1,1 +1,47 @@
-/* Clean App.css */
+/* Add styles for the collapsible sidebar */
+.sidebar-container {
+    transition: width 0.3s ease;
+    width: 280px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar-container.collapsed {
+    width: 50px;
+}
+
+.sidebar-header {
+    position: relative;
+}
+
+.sidebar-container .toggle-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    border-radius: 50%;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.sidebar-container.collapsed .toggle-btn {
+    right: auto;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.sidebar-content {
+    flex-grow: 1;
+    overflow: hidden;
+}
+
+.app-root {
+    height: var(--app-height, 100vh);
+    min-height: 100vh;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    box-sizing: border-box;
+}

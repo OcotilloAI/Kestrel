@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Button, Form, InputGroup, Dropdown, DropdownButton, Spinner } from 'react-bootstrap';
+import { Button, Form, InputGroup, Spinner } from 'react-bootstrap';
 import { FaPaperPlane, FaMicrophone, FaStop } from 'react-icons/fa';
 import type { SessionMode } from '../types';
 
@@ -13,18 +13,28 @@ interface InputAreaProps {
 export const InputArea: React.FC<InputAreaProps> = ({ onSend, onInteraction, disabled, isProcessing }) => {
     const [text, setText] = useState('');
     const [isListening, setIsListening] = useState(false);
-    const [mode, setMode] = useState<SessionMode>('continue');
+    const [autoSend, setAutoSend] = useState(true);
     const recognitionRef = useRef<any>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const sendTimerRef = useRef<any>(null);
+    const textRef = useRef(text);
+    
+    useEffect(() => { textRef.current = text; }, [text]);
 
     // Auto-resize textarea
     useEffect(() => {
-        if (textareaRef.current) {
-            // Reset height to allow shrinking
-            textareaRef.current.style.height = '50px';
-            const scrollHeight = textareaRef.current.scrollHeight;
+        const textarea = textareaRef.current;
+        if (textarea) {
+            textarea.style.height = 'auto';
+            const scrollHeight = textarea.scrollHeight;
             const maxHeight = window.innerHeight * 0.75;
-            textareaRef.current.style.height = `${Math.min(scrollHeight, maxHeight)}px`;
+            if (scrollHeight > maxHeight) {
+                textarea.style.height = `${maxHeight}px`;
+                textarea.style.overflowY = 'auto';
+            } else {
+                textarea.style.height = `${scrollHeight}px`;
+                textarea.style.overflowY = 'hidden';
+            }
         }
     }, [text]);
 
@@ -36,7 +46,6 @@ export const InputArea: React.FC<InputAreaProps> = ({ onSend, onInteraction, dis
     }, [isProcessing, isListening]);
 
     useEffect(() => {
-        // Init speech recognition
         const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (SpeechRecognition) {
             const recognition = new SpeechRecognition();
@@ -45,49 +54,42 @@ export const InputArea: React.FC<InputAreaProps> = ({ onSend, onInteraction, dis
             recognition.lang = 'en-US';
 
             recognition.onresult = (event: any) => {
-                let finalTranscript = '';
+                let newFinalTranscript = '';
                 for (let i = event.resultIndex; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) {
-                        finalTranscript += event.results[i][0].transcript;
+                        newFinalTranscript += event.results[i][0].transcript + ' ';
                     }
                 }
-                if (finalTranscript) {
-                    // Automatically send on final result? Or just append? 
-                    // The original app sent it. Let's append to text for review, or send if we want "hands-free"
-                    // Original: handleNewPrompt(finalTranscript) immediately
-                    onSend(finalTranscript, mode);
-                }
-            };
-            
-            recognition.onerror = (event: any) => {
-                console.error("Speech recognition error", event.error);
-                setIsListening(false);
-            };
-            
-            recognition.onend = () => {
-                if (isListening) {
-                     // Auto-restart if we think we are still listening? 
-                     // Or just stop.
-                     try { recognition.start(); } catch(e) { setIsListening(false); }
-                } else {
-                    setIsListening(false);
-                }
-            };
 
+                if (newFinalTranscript) {
+                    setText(prev => prev + newFinalTranscript);
+                    onInteraction?.();
+                    if (autoSend) {
+                        if (sendTimerRef.current) clearTimeout(sendTimerRef.current);
+                        sendTimerRef.current = setTimeout(() => {
+                            const currentText = textRef.current;
+                            if (currentText.trim()) {
+                                onSend(currentText, 'continue');
+                                setText('');
+                            }
+                        }, 3000);
+                    }
+                }
+            };
+            
+            recognition.onerror = (event: any) => { console.error("Speech recognition error", event.error); setIsListening(false); };
+            recognition.onend = () => { if (isListening) { try { recognition.start(); } catch(e) { setIsListening(false); } } else { setIsListening(false); } };
             recognitionRef.current = recognition;
         }
-    }, [onSend, mode, isListening]); // Careful with deps here
+    }, [onSend, isListening, autoSend, onInteraction]);
 
     const toggleListening = () => {
-        if (!recognitionRef.current) {
-            alert("Speech recognition not supported in this browser.");
-            return;
-        }
-
+        if (!recognitionRef.current) return alert("Speech recognition not supported.");
         if (isListening) {
             setIsListening(false);
             recognitionRef.current.stop();
-        } else {
+        }
+        else {
             onInteraction?.();
             setIsListening(true);
             recognitionRef.current.start();
@@ -97,7 +99,7 @@ export const InputArea: React.FC<InputAreaProps> = ({ onSend, onInteraction, dis
     const handleSend = () => {
         onInteraction?.();
         if (!text.trim()) return;
-        onSend(text, mode);
+        onSend(text, 'continue');
         setText('');
     };
 
@@ -110,22 +112,19 @@ export const InputArea: React.FC<InputAreaProps> = ({ onSend, onInteraction, dis
 
     return (
         <div className="bg-white p-3 border-top shadow-sm">
-             <div className="d-flex justify-content-center align-items-center mb-2 gap-2">
-                <span className="small text-muted">Mode:</span>
-                <DropdownButton 
-                    id="mode-dropdown" 
-                    title={mode === 'continue' ? 'Continue Session' : mode === 'duplicate' ? 'Duplicate Session' : 'New Isolated Session'}
-                    size="sm"
-                    variant="outline-secondary"
-                    onSelect={(e) => setMode(e as SessionMode)}
-                >
-                    <Dropdown.Item eventKey="continue">Continue Session</Dropdown.Item>
-                    <Dropdown.Item eventKey="duplicate">Duplicate Session</Dropdown.Item>
-                    <Dropdown.Item eventKey="new">New Isolated Session</Dropdown.Item>
-                </DropdownButton>
+             <div className="d-flex justify-content-end align-items-center mb-2">
+                <Form.Check 
+                    type="switch"
+                    id="auto-send-switch"
+                    label="Auto-Send Speech"
+                    checked={autoSend}
+                    onChange={(e) => setAutoSend(e.target.checked)}
+                    className="small text-muted"
+                />
             </div>
 
             <InputGroup>
+
                 <Form.Control
                     as="textarea"
                     ref={textareaRef}
@@ -139,9 +138,10 @@ export const InputArea: React.FC<InputAreaProps> = ({ onSend, onInteraction, dis
                     style={{ 
                         borderRadius: '20px', 
                         resize: 'none', 
-                        height: '50px',
+                        height: 'auto',
+                        minHeight: '50px',
                         maxHeight: '75vh',
-                        overflowY: 'auto'
+                        overflowY: 'hidden'
                     }}
                     disabled={disabled}
                 />

@@ -2,6 +2,7 @@ import uuid
 import logging
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Dict, Optional, List, Any
 
@@ -25,29 +26,91 @@ class SessionManager:
 
     def create_session(self, cwd: str = None, copy_from_path: str = None) -> str:
         """
-        Create a new Goose session.
+        Create a new Goose session using Git-based hierarchy.
+        
+        - New Session: Creates 'workspace/{project_name}/main' and initializes a git repo.
+        - Clone Session: Clones the source git repo into 'workspace/{project_name}/{branch_name}'.
         """
         session_id = str(uuid.uuid4())
-        session_name = generate_name()
         
-        # Determine actual working directory
+        # 1. Determine Paths
         if cwd:
+            # Explicit CWD (Shared Session or manual) - No new git logic, just attach
             final_cwd = Path(cwd)
-            # If using a shared CWD, the name is just the directory name
-            session_name = final_cwd.name
+            # Try to derive project/session names from path structure if possible
+            if final_cwd.parent.parent.name == "workspace":
+                 session_name = f"{final_cwd.parent.name}/{final_cwd.name}"
+            else:
+                 session_name = final_cwd.name
+                 
+        elif copy_from_path:
+            # CLONE (Branching)
+            source_path = Path(copy_from_path)
+            if not source_path.exists():
+                 raise ValueError(f"Source path {source_path} does not exist")
+            
+            # Assume structure: .../{project}/{branch}
+            project_dir = source_path.parent
+            
+            # Generate new branch name (adjective-noun)
+            branch_name = generate_name()
+            final_cwd = project_dir / branch_name
+            session_name = f"{project_dir.name}/{branch_name}"
+            
+            self.logger.info(f"Cloning git repo from {source_path} to {final_cwd}")
+            if final_cwd.exists():
+                raise ValueError(f"Destination path {final_cwd} already exists")
+            
+            # Git Clone
+            try:
+                # We clone locally. 
+                subprocess.run(["git", "clone", str(source_path), str(final_cwd)], check=True)
+                # Configure user for this repo to allow commits
+                subprocess.run(["git", "config", "user.email", "kestrel@ocotillo.ai"], cwd=final_cwd, check=True)
+                subprocess.run(["git", "config", "user.name", "Kestrel Agent"], cwd=final_cwd, check=True)
+            except subprocess.CalledProcessError as e:
+                self.logger.error(f"Git clone failed: {e}")
+                # Fallback to copy if not a git repo?
+                self.logger.info("Fallback to file copy...")
+                try:
+                    final_cwd.mkdir(parents=True, exist_ok=True)
+                    self._copy_contents(source_path, final_cwd)
+                except Exception as copy_error:
+                    self.logger.error(f"Fallback copy failed: {copy_error}")
+                    raise
+
         else:
-            final_cwd = self.sessions_dir / session_id
-        
-        # Ensure directory exists
-        if not final_cwd.exists():
+            # NEW PROJECT
+            project_name = generate_name()
+            project_dir = self.workdir_root / project_name
+            final_cwd = project_dir / "main"
+            session_name = f"{project_name}/main"
+            
+            if final_cwd.exists():
+                raise ValueError(f"Destination path {final_cwd} already exists")
             final_cwd.mkdir(parents=True, exist_ok=True)
             
-            # Handle cloning if requested and directory was just created
-            if copy_from_path:
-                source_path = Path(copy_from_path)
-                if source_path.exists() and source_path.is_dir():
-                    self.logger.info(f"Cloning session files from {source_path} to {final_cwd}")
-                    self._copy_contents(source_path, final_cwd)
+            # Git Init
+            try:
+                subprocess.run(["git", "init"], cwd=final_cwd, check=True)
+                subprocess.run(["git", "config", "user.email", "kestrel@ocotillo.ai"], cwd=final_cwd, check=True)
+                subprocess.run(["git", "config", "user.name", "Kestrel Agent"], cwd=final_cwd, check=True)
+                
+                # Copy hints
+                root_hints = self.workdir_root / ".goosehints"
+                if root_hints.exists():
+                    shutil.copy2(root_hints, final_cwd / ".goosehints")
+                    
+                # Initial Commit
+                subprocess.run(["git", "add", "."], cwd=final_cwd, check=True)
+                subprocess.run(["git", "commit", "-m", "Initial commit by Kestrel"], cwd=final_cwd, check=True)
+                
+            except subprocess.CalledProcessError as e:
+                self.logger.error(f"Git init failed: {e}")
+
+        # Ensure directory exists (redundant for new logic but safe)
+        if not final_cwd.exists():
+            final_cwd.mkdir(parents=True, exist_ok=True)
 
         wrapper = GooseWrapper()
         
@@ -81,6 +144,61 @@ class SessionManager:
         
     def get_session_metadata(self, session_id: str) -> Optional[Dict]:
         return self._session_metadata.get(session_id)
+
+    def list_projects(self) -> List[str]:
+        """List all project directories in the workspace."""
+        if not self.workdir_root.exists():
+            return []
+        return [d.name for d in self.workdir_root.iterdir() if d.is_dir() and (d / "main").exists()]
+
+    def list_branches(self, project_name: str) -> List[str]:
+        """List all branches (subdirectories) within a project."""
+        project_dir = self.workdir_root / project_name
+        if not project_dir.exists():
+            return []
+        return [d.name for d in project_dir.iterdir() if d.is_dir() and (d / ".git").exists()]
+
+    def delete_project(self, project_name: str) -> bool:
+        """Delete an entire project and all its branches."""
+        project_dir = self.workdir_root / project_name
+        if not project_dir.exists():
+            return False
+        
+        # Ensure we're not deleting an active session's directory
+        sessions_to_kill = [
+            sid for sid, meta in self._session_metadata.items() 
+            if self._is_relative_to(Path(meta.get("cwd", "")), project_dir)
+        ]
+        for sid in sessions_to_kill:
+            self.kill_session(sid)
+            
+        shutil.rmtree(project_dir)
+        self.logger.info(f"Deleted project {project_name}")
+        return True
+
+    def delete_branch(self, project_name: str, branch_name: str) -> bool:
+        """Delete a branch directory inside a project."""
+        branch_dir = self.workdir_root / project_name / branch_name
+        if not branch_dir.exists():
+            return False
+
+        sessions_to_kill = [
+            sid for sid, meta in self._session_metadata.items()
+            if self._is_relative_to(Path(meta.get("cwd", "")), branch_dir)
+        ]
+        for sid in sessions_to_kill:
+            self.kill_session(sid)
+
+        shutil.rmtree(branch_dir)
+        self.logger.info(f"Deleted branch {project_name}/{branch_name}")
+        return True
+
+    def _is_relative_to(self, path: Path, base: Path) -> bool:
+        try:
+            path.resolve().relative_to(base.resolve())
+            return True
+        except ValueError:
+            return False
 
     def rename_session(self, session_id: str, new_name: str) -> bool:
         """Rename an active session."""

@@ -1,4 +1,4 @@
 fastapi
 uvicorn
 websockets
-# standard-library-like backports if needed, but python 3.12 is assumed
+httpx
