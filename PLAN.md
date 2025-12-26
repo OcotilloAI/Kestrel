@@ -40,7 +40,7 @@
 ## Active Issues & Backlog
 - **[Issue #1](https://github.com/OcotilloAI/Kestrel/issues/1): Integration Test Timeout**
     - *Problem:* `test_basic.py` times out because the local `qwen3-coder:30b` model is too slow.
-    - *Status:* Open. Proposed fix: Switch to smaller model.
+    - *Status:* Closed.
 
 - **[Issue #2](https://github.com/OcotilloAI/Kestrel/issues/2): Concurrent Session Support**
     - *Problem:* Backend currently uses a single global `GooseWrapper`. All users share the same session/CWD.
