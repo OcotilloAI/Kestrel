@@ -21,7 +21,8 @@
 ### Phase 2: Web Frontend (MVP)
 - **Objective:** A functional web interface for chatting with Goose using voice.
 - **Tasks:**
-    - [x] Create `static/index.html` (and JS/CSS).
+    - [x] Create `static/index.html` (Legacy).
+    - [x] Refactor Frontend to React + TypeScript + Vite.
     - [x] Implement STT using `window.SpeechRecognition`.
     - [x] Implement TTS using `window.speechSynthesis`.
     - [x] Build Chat UI:
@@ -36,5 +37,14 @@
     - [x] Add UI sidebar for session switching.
     - [x] Support switching "working directories" or git contexts via UI.
 
+## Active Issues & Backlog
+- **[Issue #1](https://github.com/OcotilloAI/Kestrel/issues/1): Integration Test Timeout**
+    - *Problem:* `test_basic.py` times out because the local `qwen3-coder:30b` model is too slow.
+    - *Status:* Open. Proposed fix: Switch to smaller model.
+
+- **[Issue #2](https://github.com/OcotilloAI/Kestrel/issues/2): Concurrent Session Support**
+    - *Problem:* Backend currently uses a single global `GooseWrapper`. All users share the same session/CWD.
+    - *Goal:* Refactor `server.py` to map clients to independent Goose instances.
+
 ## Issue Tracking
-Major tasks are tracked as GitHub Issues.
+All tasks and bugs are tracked in [GitHub Issues](https://github.com/OcotilloAI/Kestrel/issues).

@@ -7,8 +7,12 @@ import sys
 import os
 
 class GooseWrapper:
-    def __init__(self, executable="./goose-bin"):
-        self.executable = executable
+    def __init__(self, executable=None):
+        if executable is None:
+            self.executable = os.environ.get("GOOSE_BIN", "goose")
+        else:
+            self.executable = executable
+        
         self.process = None
         self.output_queue = queue.Queue()
         self.running = False
@@ -48,14 +52,18 @@ class GooseWrapper:
         self.start(cwd)
 
     def _read_stdout(self):
-        while self.running and self.process.poll() is None:
+        while self.running:
             try:
-                line = self.process.stdout.readline()
-                if line:
-                    self.output_queue.put(line)
-                else:
+                # Read raw bytes unbuffered
+                data = os.read(self.process.stdout.fileno(), 1024)
+                if not data:
                     if self.process.poll() is not None:
                         break
+                    time.sleep(0.01)
+                    continue
+                
+                text = data.decode('utf-8', errors='replace')
+                self.output_queue.put(text)
             except Exception:
                 break
 
@@ -64,8 +72,8 @@ class GooseWrapper:
             try:
                 line = self.process.stderr.readline()
                 if line:
-                    # Stderr often contains logs/spinners. We might ignore or log them.
-                    pass 
+                    # Capture stderr for logs/status
+                    self.output_queue.put(f"[LOG] {line}")
                 else:
                     if self.process.poll() is not None:
                         break
@@ -81,19 +89,25 @@ class GooseWrapper:
                 pass
 
     def get_output(self):
-        """Generator yielding lines"""
+        """Generator yielding chunks"""
         while True:
             try:
-                line = self.output_queue.get_nowait()
-                clean_line = self._clean_ansi(line)
-                if clean_line.strip():
-                    yield clean_line
+                chunk = self.output_queue.get_nowait()
+                clean_chunk = self._clean_ansi(chunk)
+                if clean_chunk:
+                    yield clean_chunk
             except queue.Empty:
                 break
 
     def _clean_ansi(self, text):
         ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|[\[0-?]*[@-~])')
         return ansi_escape.sub('', text)
+
+    def is_alive(self):
+        return self.process is not None and self.process.poll() is None
+
+    def return_code(self):
+        return self.process.poll() if self.process else None
 
     def stop(self):
         self.running = False

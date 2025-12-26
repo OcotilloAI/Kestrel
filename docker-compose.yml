@@ -1,0 +1,32 @@
+services:
+  kestrel:
+    build: .
+    ports:
+      - "8000:8000"
+    depends_on:
+      - ollama
+    environment:
+      - GOOSE_PROVIDER=ollama
+      - GOOSE_MODEL=qwen3-coder:30b-a3b-q4_K_M
+      - OLLAMA_HOST=http://ollama:11434
+      - GOOSE_WORKDIR=/app/workdir
+    volumes:
+      - ./workdir:/app/workdir
+    working_dir: /app
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  ollama_data:

@@ -1,0 +1,4 @@
+**Goal**: Refactor `server.py` and `goose_wrapper.py` to support multiple concurrent Goose sessions.
+**Status**: Implemented (Verification Pending)
+**Resolution**: Created `SessionManager` in `src/session_manager.py`. Updated `src/server.py` to use manager and expose session endpoints. Updated frontend to handle session creation.
+**Date**: 2025-12-25

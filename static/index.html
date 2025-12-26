@@ -178,6 +178,10 @@
             100% { transform: scale(1); }
         }
 
+        .session-item { padding: 5px; font-size: 0.9rem; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+        .session-item:hover { background-color: #f0f2f5; }
+        .session-item.active { background-color: #e5e5ea; }
+        .session-actions button { font-size: 0.7rem; padding: 2px 5px; border-radius: 4px; }
     </style>
 </head>
 <body>
@@ -185,10 +189,18 @@
 <div id="sidebar">
     <div class="brand">Kestrel</div>
     
-    <div class="section-title">Session Settings</div>
-    <label for="cwd-input">Working Directory</label>
-    <input type="text" id="cwd-input" placeholder="/path/to/project">
-    <button class="secondary" onclick="updateSession()">Switch Session</button>
+    <div class="section-title">Active Session</div>
+    <div style="display: flex; gap: 5px; align-items: center;">
+        <select id="session-select" style="flex-grow: 1; padding: 8px; border-radius: 4px;"></select>
+        <button id="rename-session-btn" title="Rename Session" style="padding: 4px 8px; font-size: 0.8rem;">R</button>
+        <button id="duplicate-session-btn" title="Duplicate Session" style="padding: 4px 8px; font-size: 0.8rem;">D</button>
+        <button id="delete-session-btn" title="Delete Session" style="padding: 4px 8px; font-size: 0.8rem; background-color: #ff3b30;">X</button>
+    </div>
+    
+    <label for="cwd-input" style="margin-top: 10px;">Shared Working Directory</label>
+    <input type="text" id="cwd-input" placeholder="/path/to/project" value="/app/workdir">
+    <button class="secondary" onclick="updateSession()">Create/Switch Shared Session</button>
+    <button class="secondary" onclick="createNewIsolatedSession()" style="margin-top: 5px;">New Isolated Session</button>
     <div id="session-feedback" style="margin-top:10px; font-size: 0.8rem; color: #666;"></div>
 </div>
 
@@ -198,17 +210,31 @@
         <div id="status">Disconnected</div>
     </header>
 
-    <div id="chat-container">
-        <div class="message agent-msg">Hello! I am Goose. Click 'Start' to talk to me.</div>
+    <div id="chat-container" style="flex: 1; overflow-y: auto; padding: 20px;">
+        <!-- Pages will be dynamically added here -->
     </div>
 
-    <div id="input-area">
+    <div id="input-area" style="padding: 20px; box-shadow: 0 -1px 3px rgba(0,0,0,0.1); background-color: #fff;">
+        <div id="new-prompt-controls" style="display: flex; justify-content: center; align-items: center; gap: 15px; margin-bottom: 15px;">
+            <span style="font-size: 0.9rem;">Next Prompt:</span>
+            <select id="session-mode-select" style="padding: 5px; border-radius: 5px;">
+                <option value="continue">Continue Session</option>
+                <option value="duplicate">Duplicate Session</option>
+                <option value="new">New Isolated Session</option>
+            </select>
+        </div>
         <div id="preview">Ready...</div>
-        <div id="controls">
+        <div id="text-input-container" style="display: flex; gap: 10px;">
+            <textarea id="text-input" placeholder="Type a message or start listening..." style="flex-grow: 1; border-radius: 20px; padding: 10px; border: 1px solid #ccc; resize: none;"></textarea>
+            <button id="send-btn" style="border-radius: 20px;">Send</button>
+        </div>
+        <div id="controls" style="display: flex; justify-content: center; gap: 20px; margin-top: 10px;">
             <button id="toggle-btn">Start Listening</button>
         </div>
     </div>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
 <script>
     const statusEl = document.getElementById('status');
@@ -217,11 +243,153 @@
     const toggleBtn = document.getElementById('toggle-btn');
     const cwdInput = document.getElementById('cwd-input');
     const sessionFeedback = document.getElementById('session-feedback');
+    const sessionSelect = document.getElementById('session-select');
+    const textInput = document.getElementById('text-input');
+    const sendBtn = document.getElementById('send-btn');
+    const sessionModeSelect = document.getElementById('session-mode-select');
+    const renameSessionBtn = document.getElementById('rename-session-btn');
+    let currentPage = null; // Holds the current active page element
+    let allSessions = []; // Cache the list of sessions
 
-    // WebSocket
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
-    let socket;
+    function sendTextMessage() {
+        const text = textInput.value;
+        if (!text.trim()) return;
+        handleNewPrompt(text);
+        textInput.value = ''; // Clear input
+    }
+
+    // --- Page Management ---
+    function createNewPage() {
+        const page = document.createElement('div');
+        page.className = 'page';
+        page.style.marginBottom = '40px'; // Space between pages
+        chatEl.appendChild(page);
+        currentPage = page;
+        page.scrollIntoView({ behavior: "smooth", block: "end" });
+        return page;
+    }
+    
+    // --- Message Handling ---
+    async function handleNewPrompt(promptText) {
+        const selectedMode = sessionModeSelect.value;
+
+        if (selectedMode === 'new') {
+            await createNewIsolatedSession();
+        } else if (selectedMode === 'duplicate') {
+            const currentCwd = allSessions.find(s => s.id === currentSessionId)?.cwd;
+            if (currentCwd) {
+                await duplicateSession(currentCwd);
+            } else {
+                alert("Could not find current session to duplicate. Starting a new one.");
+                await createNewIsolatedSession();
+            }
+        }
+        // If 'continue', we just proceed with the currentSessionId
+
+        createNewPage();
+        addMessage(promptText, 'user');
+
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(promptText);
+        } else {
+            addMessage("Error: Not connected. Please start a session.", "agent");
+        }
+    }
+
+
+    async function refreshSessionList() {
+        try {
+            const res = await fetch('/sessions');
+            allSessions = await res.json();
+            sessionSelect.innerHTML = ''; // Clear existing list
+            
+            if (allSessions.length === 0) {
+                const option = document.createElement('option');
+                option.innerText = "No active sessions.";
+                sessionSelect.appendChild(option);
+                return;
+            }
+
+            allSessions.forEach(session => {
+                const option = document.createElement('option');
+                option.value = session.id;
+                option.dataset.cwd = session.cwd;
+                option.innerText = session.name;
+                
+                if (session.id === currentSessionId) {
+                    option.selected = true;
+                }
+                sessionSelect.appendChild(option);
+            });
+        } catch (e) {
+            console.error("Failed to refresh session list", e);
+        }
+    }
+    
+    sessionSelect.onchange = () => {
+        const selectedOption = sessionSelect.options[sessionSelect.selectedIndex];
+        const sessionId = selectedOption.value;
+        const sessionCwd = selectedOption.dataset.cwd;
+        if (sessionId && sessionId !== currentSessionId) {
+            switchSession(sessionId, sessionCwd);
+        }
+    };
+
+
+    async function createNewIsolatedSession() {
+        // Pass cwd as "." to let the backend create a new isolated session directory
+        const created = await createNewSession("."); 
+        if (created) {
+            connect(currentSessionId);
+        }
+    }
+
+    async function duplicateSession(sourceCwd) {
+        if (!sourceCwd) {
+            alert("Cannot determine source directory of the session to duplicate.");
+            return;
+        }
+        
+        try {
+            const res = await fetch('/session/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cwd: ".", copy_from_path: sourceCwd })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                addMessage(`Duplicated session ${sourceCwd.split('/').pop()} to new session ${data.session_id.substr(0,8)}`, "agent");
+                switchSession(data.session_id, data.cwd);
+            } else {
+                const err = await res.json();
+                alert("Error duplicating session: " + err.detail);
+            }
+        } catch(e) {
+             alert("Network error during duplication.");
+        }
+    }
+
+    async function deleteSession(sessionId) {
+        if (!confirm(`Are you sure you want to delete session ${sessionId.substr(0,8)}?`)) return;
+
+        try {
+            const res = await fetch(`/session/${sessionId}`, { method: 'DELETE' });
+            if (res.ok) {
+                addMessage(`Session ${sessionId.substr(0,8)} terminated.`, "agent");
+                if (sessionId === currentSessionId) {
+                    socket.close();
+                    currentSessionId = null;
+                    // Optional: auto-connect to another session or show a disconnected state
+                }
+                refreshSessionList();
+            } else {
+                const err = await res.json();
+                alert("Error deleting session: " + err.detail);
+            }
+        } catch(e) {
+            alert("Network error during deletion.");
+        }
+    }
 
     // Speech Recognition
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -230,50 +398,98 @@
 
     // TTS
     const synth = window.speechSynthesis;
+    let inCodeBlock = false; // State for TTS
 
-    async function fetchSessionStatus() {
+    async function initSession() {
+        sessionFeedback.innerText = "Initializing session...";
+        await refreshSessionList();
+        
         try {
-            const res = await fetch('/session/status');
-            const data = await res.json();
-            cwdInput.value = data.cwd;
+            const listRes = await fetch('/sessions');
+            const sessions = await listRes.json();
+            
+            if (sessions.length > 0) {
+                // Join first available session
+                currentSessionId = sessions[0].id;
+                cwdInput.value = sessions[0].cwd;
+                console.log("Joining existing session:", currentSessionId);
+                sessionFeedback.innerText = "Joined existing session.";
+            } else {
+                // Create new session
+                await createNewSession("/app/workdir");
+            }
+            
+            if (currentSessionId) {
+                connect(currentSessionId);
+            }
         } catch (e) {
-            console.error("Failed to fetch status", e);
+            console.error("Init failed", e);
+            sessionFeedback.innerText = "Init failed: " + e;
         }
     }
 
-    async function updateSession() {
-        const newCwd = cwdInput.value;
-        sessionFeedback.innerText = "Updating...";
-        
+    async function createNewSession(cwd) {
+        if (!cwd) cwd = ".";
         try {
-            const res = await fetch('/session/config', {
+            const res = await fetch('/session/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cwd: newCwd })
+                body: JSON.stringify({ cwd: cwd })
             });
             
             if (res.ok) {
                 const data = await res.json();
-                sessionFeedback.innerText = "Session switched!";
+                currentSessionId = data.session_id;
+                cwdInput.value = data.cwd;
+                sessionFeedback.innerText = "Session created!";
                 sessionFeedback.style.color = "green";
-                // Clear chat on switch? Maybe optional.
-                addMessage("Session switched to: " + data.cwd, "agent");
+                addMessage("New session created in: " + data.cwd, "agent");
+                await refreshSessionList();
+                return true;
             } else {
                 const err = await res.json();
                 sessionFeedback.innerText = "Error: " + err.detail;
                 sessionFeedback.style.color = "red";
+                return false;
             }
         } catch (e) {
             sessionFeedback.innerText = "Network Error";
             sessionFeedback.style.color = "red";
+            return false;
         }
     }
 
-    function connect() {
+    async function updateSession() {
+        // This is now "Switch/Create Session"
+        const newCwd = cwdInput.value;
+        if (socket) {
+            socket.close(); // Disconnect current
+        }
+        
+        const created = await createNewSession(newCwd);
+        if (created) {
+            connect(currentSessionId);
+        }
+    }
+
+    function switchSession(sessionId, sessionCwd) {
+        if (socket) {
+            socket.close();
+        }
+        currentSessionId = sessionId;
+        cwdInput.value = sessionCwd;
+        addMessage(`Switched to session ${sessionId.substr(0, 8)}`, "agent");
+        connect(sessionId);
+        refreshSessionList();
+    }
+
+    function connect(sessionId) {
+        if (!sessionId) return;
+        const wsUrl = `${wsProtocol}//${window.location.host}/ws/${sessionId}`;
         socket = new WebSocket(wsUrl);
 
         socket.onopen = () => {
-            statusEl.innerText = "Connected";
+            statusEl.innerText = "Connected (" + sessionId.substr(0, 8) + ")";
             statusEl.style.color = "green";
         };
 
@@ -281,15 +497,26 @@
             const text = event.data;
             if (text.startsWith("G: ")) {
                 const msg = text.substring(3);
-                addMessage(msg, 'agent');
+                
+                // Skip log messages for chat, maybe log to console
+                if (msg.startsWith("[LOG]")) {
+                    console.log("Backend Log:", msg);
+                    return; 
+                }
+
+                // Append to chat and speak
+                appendToLastAgentMessage(msg);
                 speak(msg);
+
+            } else if (text.startsWith("ERROR:")) {
+                alert(text);
             }
         };
 
         socket.onclose = () => {
             statusEl.innerText = "Disconnected";
             statusEl.style.color = "red";
-            setTimeout(connect, 3000); // Reconnect
+            // Don't auto-reconnect blindly as session might be dead
         };
     }
 
@@ -300,7 +527,7 @@
         }
 
         recognition = new SpeechRecognition();
-        recognition.continuous = false; 
+        recognition.continuous = true; 
         recognition.interimResults = true;
         recognition.lang = 'en-US';
 
@@ -312,9 +539,18 @@
         };
 
         recognition.onend = () => {
-            isRecording = false;
-            toggleBtn.innerText = "Start Listening";
-            toggleBtn.classList.remove("recording");
+            if (isRecording) {
+                try {
+                    recognition.start();
+                } catch (e) {
+                    isRecording = false;
+                    toggleBtn.innerText = "Start Listening";
+                    toggleBtn.classList.remove("recording");
+                }
+            } else {
+                toggleBtn.innerText = "Start Listening";
+                toggleBtn.classList.remove("recording");
+            }
         };
 
         recognition.onresult = (event) => {
@@ -335,12 +571,12 @@
 
             if (finalTranscript) {
                 previewEl.innerText = "Sending: " + finalTranscript;
-                addMessage(finalTranscript, 'user');
-                socket.send(finalTranscript);
+                handleNewPrompt(finalTranscript);
             }
         };
         
         recognition.onerror = (event) => {
+            if (event.error === 'no-speech') return; // Ignore
             console.error("Speech Error", event.error);
             previewEl.innerText = "Error: " + event.error;
         };
@@ -348,34 +584,128 @@
 
     function toggleRecording() {
         if (isRecording) {
+            isRecording = false;
             recognition.stop();
         } else {
+            if (synth.speaking) {
+                synth.cancel();
+            }
+            isRecording = true;
             recognition.start();
         }
     }
 
     function addMessage(text, sender) {
+        if (!currentPage) {
+            console.error("Attempted to add a message with no active page.");
+            return;
+        }
         const div = document.createElement('div');
         div.classList.add('message');
         div.classList.add(sender === 'user' ? 'user-msg' : 'agent-msg');
-        div.innerText = text;
-        chatEl.appendChild(div);
-        chatEl.scrollTop = chatEl.scrollHeight;
+        
+        if (sender === 'user') {
+            div.innerText = text;
+        } else {
+            div.innerHTML = marked.parse(text);
+            div.dataset.raw = text;
+        }
+        
+        currentPage.appendChild(div);
+        currentPage.scrollTop = currentPage.scrollHeight;
+    }
+
+    function appendToLastAgentMessage(chunk) {
+        if (!currentPage) return;
+        const lastMsg = currentPage.lastElementChild;
+        if (lastMsg && lastMsg.classList.contains('agent-msg')) {
+            const currentRaw = lastMsg.dataset.raw || "";
+            const newRaw = currentRaw + chunk; // Chunks are not always new lines now
+            lastMsg.dataset.raw = newRaw;
+            lastMsg.innerHTML = marked.parse(newRaw);
+            chatEl.scrollTop = chatEl.scrollHeight; // Scroll main container
+        } else {
+            addMessage(chunk, 'agent');
+        }
+    }
+
+    function summarizeForTTS(text) {
+        // Don't summarize short texts
+        const sentences = text.match(/[^\.!\?]+[\.!\?]+/g) || [text];
+        if (sentences.length <= 3) {
+            return text;
+        }
+
+        let summarySentences = [];
+        // Prioritize sentences without code
+        const nonCodeSentences = sentences.filter(s => !s.includes('`'));
+
+        if (nonCodeSentences.length > 0) {
+            // Add the first sentence
+            summarySentences.push(nonCodeSentences[0]);
+
+            // Add one or two sentences from the middle if available
+            if (nonCodeSentences.length > 3) {
+                summarySentences.push(nonCodeSentences[Math.floor(nonCodeSentences.length / 2)]);
+            }
+
+            // Add the last sentence if it's different from the first
+            if (nonCodeSentences.length > 1) {
+                summarySentences.push(nonCodeSentences[nonCodeSentences.length - 1]);
+            }
+        } else {
+            // If all sentences contain code, just use the first and last
+            summarySentences.push(sentences[0]);
+            if (sentences.length > 1) {
+                summarySentences.push(sentences[sentences.length - 1]);
+            }
+        }
+        
+        // Remove duplicates and join
+        return [...new Set(summarySentences)].join(" ");
     }
 
     function speak(text) {
-        const cleanText = text.replace(/[*#]/g, ''); 
+        // Toggle code block state
+        if (text.trim().startsWith("```")) {
+            inCodeBlock = !inCodeBlock;
+            return; // Don't speak the fence line
+        }
+
+        if (inCodeBlock) {
+            return; // Don't speak code
+        }
+        
+        const summary = summarizeForTTS(text);
+
+        // Clean up markdown symbols for speech
+        let cleanText = summary
+            .replace(/^[#\-*]+ /g, '') // Remove starting bullets/headers
+            .replace(/[*_`]/g, '')     // Remove formatting chars
+            .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1'); // Links -> Text
+
+        if (!cleanText.trim()) return;
+
         const utterance = new SpeechSynthesisUtterance(cleanText);
         utterance.rate = 1.0;
         synth.speak(utterance);
     }
 
-    // Init
-    fetchSessionStatus();
-    connect();
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        utterance.rate = 1.0;
+        synth.speak(utterance);
+    }
+
+    // --- Init and Event Listeners ---
+    initSession().then(() => {
+        createNewPage(); // Create the first page on startup
+        addMessage("Hello! I am Goose. Type a message or click 'Start Listening' to talk to me.", "agent");
+    });
     initSpeech();
 
-    toggleBtn.addEventListener('click', toggleRecording);
+
+
+
 
 </script>
 </body>

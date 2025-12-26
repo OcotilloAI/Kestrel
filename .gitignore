@@ -5,11 +5,13 @@ __pycache__/
 .venv/
 env/
 venv/
+.venv_test/
 
 # Project Binaries & Data
 goose-bin
 piper-bin/
 piper-data/
+workdir/
 
 # Logs
 *.log
