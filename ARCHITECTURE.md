@@ -61,6 +61,11 @@ Beyond summaries, Kestrel should support a back-and-forth dialog about the work:
 *   **On-demand detail**: The user can request specific details (e.g., “read the script”) and the orchestrator provides the relevant content in speech-friendly form.
 *   **Context-aware follow-ups**: The orchestrator can explain what was done and propose next steps, not just recite a summary.
 
+## Project Memory & RAG Context
+*   **Project Memory**: Maintain a project-local record of architecture decisions, tasks, and status. This is used by the orchestrator as a durable “what we’re building” context.
+*   **Transcripts**: Session transcripts are stored alongside the project code (not in global workspace) so they can be mined for intent, corrections, and decisions.
+*   **Retrieval**: The controller can retrieve relevant snippets from project memory/transcripts to ground clarifying questions and summaries.
+
 ## Data Flow (Baseline)
 
 1.  **Speech Input**:
@@ -89,7 +94,12 @@ Beyond summaries, Kestrel should support a back-and-forth dialog about the work:
     *   `role`: controller | coder | summarizer
     *   `content`: full text
     *   `metadata`: timestamps, tool identifiers, status
-*   Transcripts are stored per session for replay and debugging.
+*   Transcripts are stored per session inside the project tree for replay, debugging, and RAG context.
+
+## Multi-Tenant Readiness
+*   **Tenant Isolation**: Sessions, transcripts, and tool scopes must be isolatable per tenant.
+*   **Access Control**: Orchestrator and MCP tools must enforce per-tenant permissions.
+*   **Future Requirement**: Architecture must allow multi-tenant hosting without changing core session semantics.
 
 ## Testing & Validation
 *   Stream integrity tests: ordered, framed output with no resets.
