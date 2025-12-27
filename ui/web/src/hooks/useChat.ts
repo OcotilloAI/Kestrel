@@ -49,6 +49,7 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
 
     const reconnectTimeoutRef = useRef<any>(null);
     const shouldReconnectRef = useRef<boolean>(true);
+    const hasConnectedRef = useRef<boolean>(false);
 
     useEffect(() => {
         if (!sessionId) {
@@ -56,6 +57,8 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
             setStatus('disconnected');
             return;
         }
+
+        hasConnectedRef.current = false;
 
         const connect = () => {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -71,8 +74,11 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
 
                     socket.onopen = () => {
                         setStatus('connected');
-                         setMessages([]); 
-                         // addMessage("system", "Connected to session " + sessionId.substr(0, 8));
+                        if (!hasConnectedRef.current) {
+                            setMessages([]);
+                            hasConnectedRef.current = true;
+                        }
+                        // addMessage("system", "Connected to session " + sessionId.substr(0, 8));
                     };
             
             socket.onmessage = (event) => {
