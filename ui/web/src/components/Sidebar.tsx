@@ -42,11 +42,13 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
     const branchList = branchListByProject[currentProjectName] || [];
 
     useEffect(() => {
-        if (activeProjectName && activeProjectName !== currentProjectName) {
+        const activeProjectValid = activeProjectName && projectNames.includes(activeProjectName);
+        if (activeProjectValid && activeProjectName !== currentProjectName) {
             setCurrentProjectName(activeProjectName);
+            return;
         }
-        if (!activeProjectName && !currentProjectName && projectNames.length > 0) {
-            setCurrentProjectName(projectNames[0]);
+        if (!activeProjectValid && (!currentProjectName || !projectNames.includes(currentProjectName))) {
+            setCurrentProjectName(projectNames[0] || '');
         }
     }, [activeProjectName, currentProjectName, projectNames]);
 
@@ -87,6 +89,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
         if (!confirmState) return;
         if (confirmState.type === 'project') {
             onDeleteProject(confirmState.projectName);
+            setCurrentProjectName('');
         } else if (confirmState.type === 'branch' && confirmState.branchName) {
             if (confirmState.sessionId) {
                 onDeleteBranch(confirmState.sessionId);
