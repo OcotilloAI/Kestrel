@@ -123,6 +123,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                         size="sm"
                         value={currentProjectName}
                         onChange={(e) => setCurrentProjectName(e.target.value)}
+                        data-testid="project-select"
                     >
                         {projectNames.map(name => <option key={name} value={name}>{name}</option>)}
                     </Form.Select>
@@ -137,6 +138,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                             value={sourceBranch}
                             onChange={(e) => setSourceBranch(e.target.value)}
                             disabled={branchList.length === 0}
+                            data-testid="branch-source-select"
                         >
                             {branchList.map(b => <option key={b} value={b}>{b}</option>)}
                         </Form.Select>
@@ -146,12 +148,13 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                             value={newBranchName}
                             onChange={(e) => setNewBranchName(e.target.value)}
                             disabled={projectNames.length === 0}
+                            data-testid="branch-name-input"
                         />
-                        <Button size="sm" variant="outline-primary" onClick={handleCreateBranch} disabled={projectNames.length === 0}>
+                        <Button size="sm" variant="outline-primary" onClick={handleCreateBranch} disabled={projectNames.length === 0} data-testid="branch-create-button">
                             Create Branch
                         </Button>
                     </div>
-                    <ListGroup variant="flush">
+                    <ListGroup variant="flush" data-testid="branch-list">
                         {branchList.map(branchName => {
                             const session = sessions.find(s => s.name === `${currentProjectName}/${branchName}`);
                             const isActive = session?.id === activeSessionId;
@@ -163,6 +166,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                                 tabIndex={0}
                                 action 
                                 active={isActive}
+                                data-testid={`branch-item-${branchName}`}
                                 onClick={() => {
                                     if (session) {
                                         onSelectSession(session.id);
@@ -196,6 +200,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                                         }
                                     }}
                                     title="Delete Branch"
+                                    data-testid={`branch-delete-${branchName}`}
                                 >
                                     <FaTrash size={12} />
                                 </Button>
@@ -205,10 +210,10 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                 </div>
 
                 <div className="p-3 border-top">
-                    <Button variant="primary" className="w-100" onClick={() => onCreateSession()}>
+                    <Button variant="primary" className="w-100" onClick={() => onCreateSession()} data-testid="project-create-button">
                         <FaFolderPlus className="me-2"/> New Project
                     </Button>
-                    <Button variant="outline-danger" className="w-100 mt-2" onClick={handleDeleteProject} disabled={!currentProjectName}>
+                    <Button variant="outline-danger" className="w-100 mt-2" onClick={handleDeleteProject} disabled={!currentProjectName} data-testid="project-delete-button">
                         Delete Project
                     </Button>
                 </div>
@@ -217,7 +222,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
     );
 
     const confirmModal = (
-        <Modal show={!!confirmState} onHide={() => setConfirmState(null)} centered>
+        <Modal show={!!confirmState} onHide={() => setConfirmState(null)} centered data-testid="confirm-modal">
             <Modal.Header closeButton>
                 <Modal.Title>
                     {confirmState?.type === 'project' ? 'Delete Project' : 'Delete Branch'}
@@ -231,10 +236,10 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                 )}
             </Modal.Body>
             <Modal.Footer>
-                <Button variant="secondary" onClick={() => setConfirmState(null)}>
+                <Button variant="secondary" onClick={() => setConfirmState(null)} data-testid="confirm-cancel">
                     Cancel
                 </Button>
-                <Button variant="danger" onClick={confirmDelete}>
+                <Button variant="danger" onClick={confirmDelete} data-testid="confirm-delete">
                     Delete
                 </Button>
             </Modal.Footer>
