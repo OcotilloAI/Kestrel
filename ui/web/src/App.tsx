@@ -63,6 +63,18 @@ function App() {
         didInitRef.current = true;
     }, [sessions, activeSessionId, setActiveSessionId, sessionsLoading, sessionsLoaded, projectsLoaded, createSession, isAuthenticated, projects]);
 
+    // Keep active session in sync after create/delete without forcing full re-init
+    useEffect(() => {
+        if (sessionsLoading || !sessionsLoaded || !projectsLoaded || !isAuthenticated) return;
+        if (activeSessionId && !sessions.some(s => s.id === activeSessionId)) {
+            setActiveSessionId(null);
+            return;
+        }
+        if (!activeSessionId && sessions.length > 0) {
+            setActiveSessionId(sessions[0].id);
+        }
+    }, [sessions, activeSessionId, sessionsLoading, sessionsLoaded, projectsLoaded, isAuthenticated, setActiveSessionId]);
+
     useEffect(() => {
         if (activeSessionId && sessions.some(s => s.id === activeSessionId)) {
             localStorage.setItem('kestrel_active_session', activeSessionId);
@@ -70,6 +82,9 @@ function App() {
             if (session?.cwd) {
                 localStorage.setItem('kestrel_active_session_cwd', session.cwd);
             }
+        } else if (!activeSessionId) {
+            localStorage.removeItem('kestrel_active_session');
+            localStorage.removeItem('kestrel_active_session_cwd');
         }
     }, [activeSessionId, sessions]);
 
@@ -113,7 +128,7 @@ function App() {
                 activeSessionId={activeSessionId}
                 projectNames={projects}
                 onSelectSession={(id) => { setActiveSessionId(id); setShowSidebar(false); }}
-                onCreateSession={(cwd) => { createSession(cwd); setShowSidebar(false); }}
+                onCreateSession={(cwd) => { createSession(cwd).then(id => { if (id) setActiveSessionId(id); }); setShowSidebar(false); }}
                 onDeleteBranch={deleteBranch}
                 onDeleteBranchByName={deleteBranchByName}
                 onDeleteProject={deleteProject}

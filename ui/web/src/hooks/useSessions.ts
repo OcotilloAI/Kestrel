@@ -48,6 +48,7 @@ export const useSessions = () => {
             // Assuming the backend returns the session object or similar
             // We might need to refresh the list or construct the object
             await fetchSessions();
+            await fetchProjects();
             return newSession.session_id;
         } catch (err: any) {
             setError(err.message);
