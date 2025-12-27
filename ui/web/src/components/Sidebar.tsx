@@ -128,6 +128,9 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                             return (
                             <ListGroup.Item 
                                 key={branchName} 
+                                as="div"
+                                role="button"
+                                tabIndex={0}
                                 action 
                                 active={isActive}
                                 onClick={() => {
@@ -135,6 +138,16 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                                         onSelectSession(session.id);
                                     } else {
                                         onOpenBranch(currentProjectName, branchName);
+                                    }
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        if (session) {
+                                            onSelectSession(session.id);
+                                        } else {
+                                            onOpenBranch(currentProjectName, branchName);
+                                        }
                                     }
                                 }}
                                 className="d-flex justify-content-between align-items-center p-2 rounded mb-1 border-0"
