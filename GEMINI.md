@@ -9,7 +9,7 @@
 ## Verification Mandates
 1.  **End-to-End Validation**: Before claiming success, thoroughly test both the UI and API endpoints to ensure full functionality.
 2.  **Semantic Correctness**: Crucially, verify that all responses (especially summarized content) are meaningful, coherent, and free from corruption.
-3.  **Automated Testing**: Leverage existing test structures and actively work towards incorporating automated UI (e.g., Playwright) and API tests.
+3.  **Automated Testing**: Use the Playwright UI e2e harness for regressions and expand API tests alongside fixes.
 
 ## Issue Tracking Workflow
 1. **Identify**: Clearly state the problem or feature request.
@@ -20,8 +20,8 @@
 ## Testing Strategy
 1.  **Backend Verification:** Core backend functionality (API endpoints, session management, agent capabilities) will be verified by a growing suite of Python test scripts located in the `tests/` directory.
 2.  **Test-Driven Development:** New features or bug fixes must be accompanied by a corresponding test case that validates the change and protects against future regressions.
-3.  **Frontend Verification:** UI features will be manually verified in the browser after each deployment. The goal is to incorporate automated end-to-end testing frameworks (e.g., Playwright, Selenium) in the future.
-4.  **Execution:** The test suite can be run using a simple, standardized command.
+3.  **Frontend Verification:** UI features should be validated with the Playwright e2e suite, plus a quick manual smoke test.
+4.  **Execution:** Use `scripts/run_ui_e2e.sh` (optionally with `BASE_URL=...` or a positional URL) for UI e2e tests.
 
 ## Technical Context
 - **Project**: Kestrel (FastAPI + Goose integration)
