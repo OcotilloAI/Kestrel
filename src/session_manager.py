@@ -128,13 +128,15 @@ class SessionManager:
         try:
             wrapper.start(cwd=str(final_cwd))
             self._sessions[session_id] = wrapper
+            project_root = self._resolve_project_root(final_cwd)
             self._session_metadata[session_id] = {
                 "id": session_id,
                 "name": session_name,
                 "cwd": str(final_cwd),
+                "project_root": str(project_root) if project_root else None,
             }
             self._transcripts[session_id] = []
-            self._transcript_paths[session_id] = self.sessions_dir / f"{session_id}.jsonl"
+            self._transcript_paths[session_id] = self._build_transcript_path(session_id, project_root)
             self.logger.info(f"Created session '{session_name}' ({session_id}) in {final_cwd}")
             return session_id
         except Exception as e:
@@ -290,10 +292,30 @@ class SessionManager:
         for sid in list(self._sessions.keys()):
             self.kill_session(sid)
 
+    def _resolve_project_root(self, cwd: Path) -> Optional[Path]:
+        cwd = cwd.resolve()
+        try:
+            rel = cwd.relative_to(self.workdir_root.resolve())
+        except ValueError:
+            return None
+        parts = rel.parts
+        if len(parts) >= 2:
+            return self.workdir_root / parts[0]
+        return None
+
+    def _build_transcript_path(self, session_id: str, project_root: Optional[Path]) -> Path:
+        if project_root:
+            session_dir = project_root / ".kestrel" / "sessions"
+            session_dir.mkdir(parents=True, exist_ok=True)
+            return session_dir / f"{session_id}.jsonl"
+        return self.sessions_dir / f"{session_id}.jsonl"
+
     def record_event(self, session_id: str, event: Dict[str, Any]) -> None:
         if session_id not in self._transcripts:
             self._transcripts[session_id] = []
-            self._transcript_paths[session_id] = self.sessions_dir / f"{session_id}.jsonl"
+            meta = self._session_metadata.get(session_id, {})
+            project_root = Path(meta["project_root"]) if meta.get("project_root") else None
+            self._transcript_paths[session_id] = self._build_transcript_path(session_id, project_root)
         self._transcripts[session_id].append(event)
         path = self._transcript_paths.get(session_id)
         if not path:
