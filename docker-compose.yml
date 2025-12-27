@@ -10,6 +10,7 @@ services:
       - GOOSE_MODEL=qwen3-coder:30b-a3b-q4_K_M
       - OLLAMA_HOST=http://ollama:11434
       - GOOSE_WORKDIR=/workspace
+      - GOOSE_CONTROLLER_ENABLED=1
     volumes:
       - ./workspace:/workspace
     working_dir: /app

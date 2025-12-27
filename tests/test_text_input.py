@@ -3,6 +3,7 @@ import websocket
 import threading
 import time
 import pytest
+import json
 
 # Configuration
 API_URL = "http://localhost:8000"
@@ -36,7 +37,14 @@ def test_text_message_is_received(session):
         while is_listening.is_set():
             try:
                 msg = ws.recv()
-                if msg.startswith("G: "):
+                if msg.startswith("{"):
+                    try:
+                        payload = json.loads(msg)
+                        if payload.get("type") == "assistant":
+                            received_messages.append(payload.get("content", ""))
+                    except Exception:
+                        pass
+                elif msg.startswith("G: "):
                     received_messages.append(msg[3:])
             except websocket.WebSocketConnectionClosedException:
                 break

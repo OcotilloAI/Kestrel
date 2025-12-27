@@ -111,9 +111,10 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
                         }
                         messageAccumulatorRef.current = "";
                     }, 2000);
+                    const role = parsed?.role === 'controller' ? 'system' : 'agent';
                     setMessages(prev => {
                         const last = prev[prev.length - 1];
-                        if (last && last.role === 'agent') {
+                        if (last && last.role === role) {
                              return [
                                 ...prev.slice(0, -1),
                                 { ...last, content: last.content + msgContent }
@@ -121,7 +122,7 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
                         } else {
                             return [...prev, {
                                 id: uuidv4(),
-                                role: 'agent',
+                                role,
                                 content: msgContent,
                                 timestamp: Date.now()
                             }];

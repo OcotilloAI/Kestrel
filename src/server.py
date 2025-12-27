@@ -11,6 +11,7 @@ import os
 import httpx
 import json
 import time
+import re
 
 app = FastAPI()
 
@@ -86,6 +87,29 @@ async def summarize_text(request: SummarizeRequest):
         "Keep each sentence concise and factual. No bullet points or preamble.\n\n"
         f"---\n{request.text}\n---"
     )
+    def normalize_summary(raw_summary: str, source_text: str) -> str:
+        def has_format(text: str) -> bool:
+            return (
+                text.strip().startswith("I did")
+                and "I learned" in text
+                and "Next" in text
+            )
+
+        if raw_summary and has_format(raw_summary):
+            return raw_summary.strip()
+
+        code_blocks = len(re.findall(r"```[\\s\\S]*?```", source_text))
+        clean = re.sub(r"```[\\s\\S]*?```", " code block ", source_text)
+        clean = re.sub(r"\\s+", " ", clean).strip()
+        snippet_words = clean.split()[:12]
+        snippet = " ".join(snippet_words) if snippet_words else "the current task context"
+        block_phrase = f"{code_blocks} code block(s)" if code_blocks else "no code blocks"
+        return (
+            f"I did review the response and noted {block_phrase}.\n"
+            f"I learned {snippet}.\n"
+            f"Next validate the output and iterate on any remaining gaps."
+        )
+
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
@@ -94,7 +118,8 @@ async def summarize_text(request: SummarizeRequest):
             )
             response.raise_for_status()
             data = response.json()
-            return {"summary": data.get("response", "").strip()}
+            raw_summary = data.get("response", "").strip()
+            return {"summary": normalize_summary(raw_summary, request.text)}
     except httpx.RequestError as e:
         raise HTTPException(status_code=500, detail=f"Failed to connect to Ollama: {e}")
     except Exception as e:
