@@ -15,12 +15,10 @@ function App() {
     const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('kestrel_auth') === 'true');
     
     // UI State
-    const [showMobileSidebar, setShowMobileSidebar] = useState(false);
-    const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(false);
-    const [isDesktop] = useState(() => window.matchMedia('(min-width: 768px)').matches);
+    const [showSidebar, setShowSidebar] = useState(false);
 
     // Data Hooks
-    const { sessions, activeSessionId, setActiveSessionId, createSession, deleteBranch, deleteProject, createBranch, isLoading: sessionsLoading, hasLoaded: sessionsLoaded, projects, projectsLoaded } = useSessions();
+    const { sessions, activeSessionId, setActiveSessionId, createSession, deleteBranch, deleteBranchByName, deleteProject, createBranch, openBranchSession, branchListByProject, fetchBranches, isLoading: sessionsLoading, hasLoaded: sessionsLoaded, projects, projectsLoaded } = useSessions();
     const { messages, status, sendMessage, isProcessing, stopSpeaking, speakText } = useChat(
         isAuthenticated ? activeSessionId : null,
         () => setActiveSessionId(null)
@@ -95,55 +93,35 @@ function App() {
     }
 
     return (
-        <div className={`d-flex app-root overflow-hidden ${isDesktop ? '' : 'mobile-layout'}`}>
-            {isDesktop ? (
-                <Sidebar 
-                    isCollapsed={isDesktopSidebarCollapsed}
-                    onToggleCollapse={() => setIsDesktopSidebarCollapsed(prev => !prev)}
-                    sessions={sessions}
-                    activeSessionId={activeSessionId}
-                    onSelectSession={setActiveSessionId}
-                    onCreateSession={createSession}
-                    onDeleteBranch={deleteBranch}
-                    onDeleteProject={deleteProject}
-                    onCreateBranch={createBranch}
-                    onDuplicateSession={(id) => {
-                        const s = sessions.find(s => s.id === id);
-                        if(s) createSession(undefined, s.cwd);
-                    }}
-                />
-            ) : (
-                <>
-                    <div className="mobile-topbar">
-                        <Button
-                            variant="light"
-                            className="mobile-menu-btn"
-                            onClick={() => setShowMobileSidebar(prev => !prev)}
-                            aria-label="Toggle sidebar"
-                        >
-                            <FaBars />
-                        </Button>
-                        <div className="mobile-title">Kestrel</div>
-                    </div>
-                    <Sidebar 
-                        isOffcanvas
-                        show={showMobileSidebar}
-                        onHide={() => setShowMobileSidebar(false)}
-                        sessions={sessions}
-                        activeSessionId={activeSessionId}
-                        onSelectSession={(id) => { setActiveSessionId(id); setShowMobileSidebar(false); }}
-                        onCreateSession={(cwd) => { createSession(cwd); setShowMobileSidebar(false); }}
-                        onDeleteBranch={deleteBranch}
-                        onDeleteProject={deleteProject}
-                        onCreateBranch={createBranch}
-                        onDuplicateSession={(id) => {
-                            const s = sessions.find(s => s.id === id);
-                            if(s) createSession(undefined, s.cwd);
-                            setShowMobileSidebar(false);
-                        }}
-                    />
-                </>
-            )}
+        <div className="d-flex app-root overflow-hidden mobile-layout">
+            <div className="mobile-topbar">
+                <Button
+                    variant="light"
+                    className="mobile-menu-btn"
+                    onClick={() => setShowSidebar(prev => !prev)}
+                    aria-label="Toggle sidebar"
+                >
+                    <FaBars />
+                </Button>
+                <div className="mobile-title">Kestrel</div>
+            </div>
+            <Sidebar 
+                isOffcanvas
+                show={showSidebar}
+                onHide={() => setShowSidebar(false)}
+                sessions={sessions}
+                activeSessionId={activeSessionId}
+                projectNames={projects}
+                onSelectSession={(id) => { setActiveSessionId(id); setShowSidebar(false); }}
+                onCreateSession={(cwd) => { createSession(cwd); setShowSidebar(false); }}
+                onDeleteBranch={deleteBranch}
+                onDeleteBranchByName={deleteBranchByName}
+                onDeleteProject={deleteProject}
+                onCreateBranch={createBranch}
+                onOpenBranch={openBranchSession}
+                branchListByProject={branchListByProject}
+                fetchBranches={fetchBranches}
+            />
 
             <div className="d-flex flex-column flex-grow-1 content-pane" style={{minWidth: 0}}>
                 <ChatArea 

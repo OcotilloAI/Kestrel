@@ -123,6 +123,18 @@ async def delete_branch(project_name: str, branch_name: str):
         return {"status": "deleted", "project": project_name, "branch": branch_name}
     raise HTTPException(status_code=404, detail="Branch not found")
 
+@app.post("/project/{project_name}/branch/{branch_name}/session")
+async def open_branch_session(project_name: str, branch_name: str):
+    branch_dir = manager.workdir_root / project_name / branch_name
+    if not branch_dir.exists():
+        raise HTTPException(status_code=404, detail="Branch not found")
+    try:
+        session_id = manager.create_session(cwd=str(branch_dir))
+        metadata = manager.get_session_metadata(session_id)
+        return {"session_id": session_id, "cwd": metadata["cwd"]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/session/create")
 async def create_session(config: SessionConfig):
     cwd_param = config.cwd

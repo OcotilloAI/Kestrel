@@ -7,6 +7,7 @@ export const useSessions = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [hasLoaded, setHasLoaded] = useState(false);
     const [projects, setProjects] = useState<string[]>([]);
+    const [branchListByProject, setBranchListByProject] = useState<Record<string, string[]>>({});
     const [projectsLoaded, setProjectsLoaded] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -123,6 +124,27 @@ export const useSessions = () => {
         }
     };
 
+    const deleteBranchByName = async (projectName: string, branchName: string) => {
+        try {
+            const res = await fetch(
+                `/project/${encodeURIComponent(projectName)}/branch/${encodeURIComponent(branchName)}`,
+                { method: 'DELETE' }
+            );
+            if (!res.ok) throw new Error('Failed to delete branch');
+            await fetchSessions();
+            await fetchProjects();
+            await fetchBranches(projectName);
+            if (activeSessionId) {
+                const activeSession = sessions.find(s => s.id === activeSessionId);
+                if (activeSession?.name === `${projectName}/${branchName}`) {
+                    setActiveSessionId(null);
+                }
+            }
+        } catch (err: any) {
+            setError(err.message);
+        }
+    };
+
     const deleteProject = async (projectName: string) => {
         try {
             const res = await fetch(`/project/${encodeURIComponent(projectName)}`, { method: 'DELETE' });
@@ -138,12 +160,12 @@ export const useSessions = () => {
         }
     };
 
-    const createBranch = async (projectName: string, branchName?: string) => {
+    const createBranch = async (projectName: string, branchName?: string, sourceBranch?: string) => {
         try {
             const res = await fetch(`/project/${encodeURIComponent(projectName)}/branch`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: branchName || null }),
+                body: JSON.stringify({ name: branchName || null, source_branch: sourceBranch || 'main' }),
             });
             if (!res.ok) {
                 const err = await res.json();
@@ -151,9 +173,33 @@ export const useSessions = () => {
             }
             await fetchSessions();
             await fetchProjects();
+            await fetchBranches(projectName);
         } catch (err: any) {
             setError(err.message);
             throw err;
+        }
+    };
+
+    const fetchBranches = useCallback(async (projectName: string) => {
+        try {
+            const res = await fetch(`/project/${encodeURIComponent(projectName)}/branches`);
+            if (!res.ok) throw new Error('Failed to fetch branches');
+            const data = await res.json();
+            setBranchListByProject(prev => ({ ...prev, [projectName]: data }));
+        } catch (err: any) {
+            setError(err.message);
+        }
+    }, []);
+
+    const openBranchSession = async (projectName: string, branchName: string) => {
+        try {
+            const res = await fetch(`/project/${encodeURIComponent(projectName)}/branch/${encodeURIComponent(branchName)}/session`, {
+                method: 'POST',
+            });
+            if (!res.ok) throw new Error('Failed to open branch session');
+            await fetchSessions();
+        } catch (err: any) {
+            setError(err.message);
         }
     };
 
@@ -169,13 +215,17 @@ export const useSessions = () => {
         createSession,
         deleteSession,
         deleteBranch,
+        deleteBranchByName,
         deleteProject,
         createBranch,
+        openBranchSession,
         fetchSessions,
         isLoading,
         hasLoaded,
         projects,
         projectsLoaded,
+        branchListByProject,
+        fetchBranches,
         error
     };
 };
