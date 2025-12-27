@@ -251,7 +251,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         match = re.match(r"^\s*read\s+(?:the\s+)?(?:file|script)\s+(.+)$", text, re.IGNORECASE)
         if match:
             return match.group(1).strip()
-        match = re.match(r"^\s*read\s+([\\w\\-./]+)$", text, re.IGNORECASE)
+        match = re.match(r"^\s*read\s+([\w./-]+)$", text, re.IGNORECASE)
         if match and "." in match.group(1):
             return match.group(1).strip()
         return None

@@ -158,23 +158,6 @@ class SessionManager:
         hints_dst = target_dir / ".goosehints"
         if hints_src.exists() and not hints_dst.exists():
             shutil.copy2(hints_src, hints_dst)
-        if hints_dst.exists():
-            self._sanitize_goosehints(hints_dst)
-
-    def _sanitize_goosehints(self, hints_path: Path) -> None:
-        try:
-            text = hints_path.read_text(encoding="utf-8")
-        except Exception:
-            return
-        if "FastAPI" not in text:
-            return
-        cleaned = text.replace("- Focus on building the requested FastAPI app in /workspace.\n", "")
-        cleaned = cleaned.replace("- Focus on building the requested FastAPI app in /workspace.", "")
-        if cleaned != text:
-            try:
-                hints_path.write_text(cleaned, encoding="utf-8")
-            except Exception:
-                self.logger.exception("Failed to sanitize goosehints")
 
     def _ensure_gooseenv(self, target_dir: Path):
         env_src = self.workdir_root / ".gooseenv"
