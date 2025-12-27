@@ -45,6 +45,8 @@ class BranchConfig(BaseModel):
 
 # Global Session Manager
 manager = SessionManager()
+CONTROLLER_ENABLED = os.environ.get("GOOSE_CONTROLLER_ENABLED", "0") == "1"
+CONTROLLER_MODEL = os.environ.get("GOOSE_CONTROLLER_MODEL", os.environ.get("GOOSE_MODEL", "qwen3-coder:30b-a3b-q4_K_M"))
 
 @app.on_event("startup")
 async def startup_event():
@@ -97,6 +99,33 @@ async def summarize_text(request: SummarizeRequest):
         raise HTTPException(status_code=500, detail=f"Failed to connect to Ollama: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Summarization failed: {e}")
+
+async def controller_decision(user_text: str) -> Optional[dict]:
+    if not CONTROLLER_ENABLED:
+        return None
+    ollama_host = os.environ.get("OLLAMA_HOST", "http://ollama:11434")
+    prompt = (
+        "You are the controller for a voice-first software development assistant.\n"
+        "Decide whether to ask a clarifying question BEFORE execution.\n"
+        "If clarification is needed, return JSON:\n"
+        "{\"action\":\"clarify\",\"question\":\"<short question>\"}\n"
+        "If no clarification is needed, return JSON:\n"
+        "{\"action\":\"execute\",\"task\":\"<normalized task>\"}\n"
+        "Return JSON only, no extra text.\n\n"
+        f"User request:\n{user_text}\n"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{ollama_host}/api/generate",
+                json={"model": CONTROLLER_MODEL, "prompt": prompt, "stream": False}
+            )
+            response.raise_for_status()
+            data = response.json()
+            raw = data.get("response", "").strip()
+            return json.loads(raw)
+    except Exception:
+        return None
 
 @app.get("/sessions")
 async def list_sessions():
@@ -237,6 +266,23 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             print(f"[{session_id}] Received: {data}")
             event = make_event(event_type="user", role="user", content=data)
             manager.record_event(session_id, event)
+
+            decision = await controller_decision(data)
+            if decision and isinstance(decision, dict):
+                action = decision.get("action")
+                if action == "clarify" and decision.get("question"):
+                    controller_event = make_event(
+                        event_type="assistant",
+                        role="controller",
+                        content=decision["question"],
+                        metadata={"controller_action": "clarify"}
+                    )
+                    manager.record_event(session_id, controller_event)
+                    await websocket.send_text(json.dumps(controller_event))
+                    continue
+                if action == "execute" and decision.get("task"):
+                    data = decision["task"]
+
             session.send_input(data)
     except WebSocketDisconnect:
         print(f"Client disconnected from {session_id}")
