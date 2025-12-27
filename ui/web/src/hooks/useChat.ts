@@ -75,8 +75,62 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
                          // addMessage("system", "Connected to session " + sessionId.substr(0, 8));
                     };
             
-        socket.onmessage = (event) => {
+            socket.onmessage = (event) => {
             const text = event.data;
+            let parsed: any = null;
+            if (typeof text === 'string' && text.trim().startsWith('{')) {
+                try {
+                    parsed = JSON.parse(text);
+                } catch {
+                    parsed = null;
+                }
+            }
+
+            if (parsed && parsed.content) {
+                const eventType = parsed.type || 'assistant';
+                const msgContent = String(parsed.content);
+
+                if (eventType === 'system') {
+                    addMessage('system', msgContent);
+                    setIsProcessing(false);
+                    return;
+                }
+                if (eventType === 'assistant') {
+                    setIsProcessing(true);
+                    if (turnTimerRef.current) clearTimeout(turnTimerRef.current);
+                    if (msgContent.startsWith("[LOG]")) {
+                        console.log("Backend Log:", msgContent);
+                        return;
+                    }
+                    messageAccumulatorRef.current += msgContent;
+                    turnTimerRef.current = setTimeout(() => {
+                        setIsProcessing(false);
+                        const finalContent = messageAccumulatorRef.current;
+                        if (finalContent) {
+                            speak(finalContent, true);
+                        }
+                        messageAccumulatorRef.current = "";
+                    }, 2000);
+                    setMessages(prev => {
+                        const last = prev[prev.length - 1];
+                        if (last && last.role === 'agent') {
+                             return [
+                                ...prev.slice(0, -1),
+                                { ...last, content: last.content + msgContent }
+                            ];
+                        } else {
+                            return [...prev, {
+                                id: uuidv4(),
+                                role: 'agent',
+                                content: msgContent,
+                                timestamp: Date.now()
+                            }];
+                        }
+                    });
+                    return;
+                }
+            }
+
             if (text.startsWith("G: ")) {
                 const msgContent = text.substring(3);
 

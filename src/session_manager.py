@@ -3,6 +3,7 @@ import logging
 import os
 import shutil
 import subprocess
+import json
 from pathlib import Path
 from typing import Dict, Optional, List, Any
 
@@ -13,6 +14,8 @@ class SessionManager:
     def __init__(self, workdir_root: str = None):
         self._sessions: Dict[str, GooseWrapper] = {}
         self._session_metadata: Dict[str, Dict[str, Any]] = {}
+        self._transcripts: Dict[str, List[Dict[str, Any]]] = {}
+        self._transcript_paths: Dict[str, Path] = {}
         self.logger = logging.getLogger("SessionManager")
         
         # Determine root storage for sessions
@@ -130,6 +133,8 @@ class SessionManager:
                 "name": session_name,
                 "cwd": str(final_cwd),
             }
+            self._transcripts[session_id] = []
+            self._transcript_paths[session_id] = self.sessions_dir / f"{session_id}.jsonl"
             self.logger.info(f"Created session '{session_name}' ({session_id}) in {final_cwd}")
             return session_id
         except Exception as e:
@@ -272,6 +277,10 @@ class SessionManager:
             del self._sessions[session_id]
             if session_id in self._session_metadata:
                  del self._session_metadata[session_id]
+            if session_id in self._transcripts:
+                del self._transcripts[session_id]
+            if session_id in self._transcript_paths:
+                del self._transcript_paths[session_id]
             self.logger.info(f"Killed session {session_id}")
             return True
         return False
@@ -280,3 +289,20 @@ class SessionManager:
         """Terminate all sessions."""
         for sid in list(self._sessions.keys()):
             self.kill_session(sid)
+
+    def record_event(self, session_id: str, event: Dict[str, Any]) -> None:
+        if session_id not in self._transcripts:
+            self._transcripts[session_id] = []
+            self._transcript_paths[session_id] = self.sessions_dir / f"{session_id}.jsonl"
+        self._transcripts[session_id].append(event)
+        path = self._transcript_paths.get(session_id)
+        if not path:
+            return
+        try:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(event, ensure_ascii=True) + "\n")
+        except Exception:
+            self.logger.exception("Failed to append transcript event")
+
+    def get_transcript(self, session_id: str) -> List[Dict[str, Any]]:
+        return list(self._transcripts.get(session_id, []))

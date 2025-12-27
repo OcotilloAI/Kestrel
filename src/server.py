@@ -9,6 +9,8 @@ from pydantic import BaseModel
 from session_manager import SessionManager
 import os
 import httpx
+import json
+import time
 
 app = FastAPI()
 
@@ -182,7 +184,22 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         return
     await websocket.accept()
     print(f"Client connected to session {session_id}")
-    await websocket.send_text("G: Welcome to Kestrel, Goose is ready to help you code from Kestrel's translations.")
+    def make_event(event_type: str, role: str, content: str, metadata: Optional[dict] = None):
+        return {
+            "type": event_type,
+            "role": role,
+            "content": content,
+            "timestamp": time.time(),
+            "metadata": metadata or {}
+        }
+
+    welcome_event = make_event(
+        event_type="system",
+        role="system",
+        content="Welcome to Kestrel, Goose is ready to help you code from Kestrel's translations."
+    )
+    manager.record_event(session_id, welcome_event)
+    await websocket.send_text(json.dumps(welcome_event))
     try:
         async def sender():
             while True:
@@ -195,12 +212,22 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                            "working directory:" in chunk or \
                            "session id:" in chunk:
                             continue
-                        await websocket.send_text(f"G: {chunk}")
+                        event_type = "assistant"
+                        role = "coder"
+                        content = chunk
+                        if chunk.startswith("[LOG]"):
+                            event_type = "system"
+                            role = "system"
+                        event = make_event(event_type=event_type, role=role, content=content)
+                        manager.record_event(session_id, event)
+                        await websocket.send_text(json.dumps(event))
                 if not session.is_alive():
                     code = session.return_code()
                     error_msg = f"ERROR: Backend process exited unexpectedly with code {code}"
                     print(error_msg)
-                    await websocket.send_text(error_msg)
+                    event = make_event(event_type="system", role="system", content=error_msg)
+                    manager.record_event(session_id, event)
+                    await websocket.send_text(json.dumps(event))
                     await websocket.close()
                     break
                 await asyncio.sleep(0.1)
@@ -208,6 +235,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         while True:
             data = await websocket.receive_text()
             print(f"[{session_id}] Received: {data}")
+            event = make_event(event_type="user", role="user", content=data)
+            manager.record_event(session_id, event)
             session.send_input(data)
     except WebSocketDisconnect:
         print(f"Client disconnected from {session_id}")
