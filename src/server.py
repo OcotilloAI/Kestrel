@@ -131,7 +131,9 @@ async def controller_decision(user_text: str) -> Optional[dict]:
     ollama_host = os.environ.get("OLLAMA_HOST", "http://ollama:11434")
     prompt = (
         "You are the controller for a voice-first software development assistant.\n"
-        "Decide whether to ask a clarifying question BEFORE execution.\n"
+        "Only ask clarifying questions when the request is too ambiguous to implement.\n"
+        "Limit to at most ONE short clarifying question per turn.\n"
+        "If the request is reasonably clear, proceed to execution without questions.\n"
         "If clarification is needed, return JSON:\n"
         "{\"action\":\"clarify\",\"question\":\"<short question>\"}\n"
         "If no clarification is needed, return JSON:\n"
