@@ -28,5 +28,8 @@ test('create and delete a branch from the sidebar', async ({ page }) => {
   await expect(branchItem).toBeVisible();
 
   await branchItem.locator('button[title="Delete Branch"]').click();
+  const dialog = page.getByRole('dialog').filter({ hasText: 'Delete Branch' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Delete' }).click();
   await expect(branchItem).toBeHidden();
 });

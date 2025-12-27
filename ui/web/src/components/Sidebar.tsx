@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import type { Session } from '../types';
-import { Button, ListGroup, Offcanvas, Form } from 'react-bootstrap';
+import { Button, ListGroup, Offcanvas, Form, Modal } from 'react-bootstrap';
 import { FaTrash, FaFolderPlus } from 'react-icons/fa';
 import '../App.css';
 
@@ -29,6 +29,12 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
     const { sessions, activeSessionId, projectNames, onSelectSession, onCreateSession, onDeleteBranch, onDeleteBranchByName, onDeleteProject, onCreateBranch, onOpenBranch, branchListByProject, fetchBranches } = props;
     const [newBranchName, setNewBranchName] = useState('');
     const [sourceBranch, setSourceBranch] = useState('main');
+    const [confirmState, setConfirmState] = useState<{
+        type: 'branch' | 'project';
+        projectName: string;
+        branchName?: string;
+        sessionId?: string;
+    } | null>(null);
 
     const activeSession = sessions.find(s => s.id === activeSessionId);
     const activeProjectName = activeSession?.name.split('/')[0];
@@ -57,17 +63,38 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
     }, [branchList, sourceBranch]);
     const handleDeleteProject = () => {
         if (!currentProjectName) return;
-        const confirmed = window.confirm(`Delete project "${currentProjectName}" and all branches? This cannot be undone.`);
-        if (confirmed) {
-            onDeleteProject(currentProjectName);
-        }
+        setConfirmState({ type: 'project', projectName: currentProjectName });
     };
 
     const handleDeleteBranch = (sessionId: string, branchLabel: string) => {
-        const confirmed = window.confirm(`Delete branch "${branchLabel}"? This will remove the on-disk repo.`);
-        if (confirmed) {
-            onDeleteBranch(sessionId);
+        setConfirmState({
+            type: 'branch',
+            projectName: currentProjectName,
+            branchName: branchLabel,
+            sessionId
+        });
+    };
+
+    const handleDeleteBranchByName = (branchLabel: string) => {
+        setConfirmState({
+            type: 'branch',
+            projectName: currentProjectName,
+            branchName: branchLabel
+        });
+    };
+
+    const confirmDelete = () => {
+        if (!confirmState) return;
+        if (confirmState.type === 'project') {
+            onDeleteProject(confirmState.projectName);
+        } else if (confirmState.type === 'branch' && confirmState.branchName) {
+            if (confirmState.sessionId) {
+                onDeleteBranch(confirmState.sessionId);
+            } else {
+                onDeleteBranchByName(confirmState.projectName, confirmState.branchName);
+            }
         }
+        setConfirmState(null);
     };
 
     const handleCreateBranch = () => {
@@ -162,7 +189,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                                         if (session) {
                                             handleDeleteBranch(session.id, branchName);
                                         } else {
-                                            onDeleteBranchByName(currentProjectName, branchName);
+                                            handleDeleteBranchByName(branchName);
                                         }
                                     }}
                                     title="Delete Branch"
@@ -186,20 +213,53 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
         </div>
     );
 
+    const confirmModal = (
+        <Modal show={!!confirmState} onHide={() => setConfirmState(null)} centered>
+            <Modal.Header closeButton>
+                <Modal.Title>
+                    {confirmState?.type === 'project' ? 'Delete Project' : 'Delete Branch'}
+                </Modal.Title>
+            </Modal.Header>
+            <Modal.Body>
+                {confirmState?.type === 'project' ? (
+                    <>Delete project "{confirmState.projectName}" and all branches? This cannot be undone.</>
+                ) : (
+                    <>Delete branch "{confirmState?.branchName}"? This will remove the on-disk repo.</>
+                )}
+            </Modal.Body>
+            <Modal.Footer>
+                <Button variant="secondary" onClick={() => setConfirmState(null)}>
+                    Cancel
+                </Button>
+                <Button variant="danger" onClick={confirmDelete}>
+                    Delete
+                </Button>
+            </Modal.Footer>
+        </Modal>
+    );
+
     if (props.isOffcanvas) {
         return (
-            <Offcanvas
-                className="sidebar-offcanvas"
-                show={props.show}
-                onHide={props.onHide}
-                placement="start"
-                backdrop={false}
-                keyboard={false}
-                scroll
-            >
-                {content}
-            </Offcanvas>
+            <>
+                <Offcanvas
+                    className="sidebar-offcanvas"
+                    show={props.show}
+                    onHide={props.onHide}
+                    placement="start"
+                    backdrop={false}
+                    keyboard={false}
+                    scroll
+                >
+                    {content}
+                </Offcanvas>
+                {confirmModal}
+            </>
         );
     }
-    return content;
+    return (
+        <>
+            {content}
+            {confirmModal}
+        </>
+    );
 };

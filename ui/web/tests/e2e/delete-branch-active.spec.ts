@@ -3,10 +3,6 @@ import { test, expect } from '@playwright/test';
 test('deleting an active branch removes it from the list', async ({ page }) => {
   const branchName = `pw-branch-${Date.now().toString().slice(-6)}`;
 
-  page.on('dialog', async (dialog) => {
-    await dialog.accept();
-  });
-
   await page.goto('/');
 
   const password = page.getByPlaceholder('Password');
@@ -31,5 +27,8 @@ test('deleting an active branch removes it from the list', async ({ page }) => {
   await expect(branchItem).toHaveClass(/active/);
 
   await branchItem.locator('button[title="Delete Branch"]').click();
+  const dialog = page.getByRole('dialog').filter({ hasText: 'Delete Branch' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Delete' }).click();
   await expect(branchItem).toBeHidden();
 });
