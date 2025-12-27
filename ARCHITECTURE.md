@@ -2,65 +2,99 @@
 
 ## Overview
 
-The system follows a pipeline architecture, wrapping the `goose` CLI process. It avoids modifying `goose` core directly, ensuring compatibility with future updates.
+Kestrel is a voice-first software development interface. The UI presents full technical detail, while the spoken channel delivers concise summaries suited for audio consumption. This document captures both the current baseline and the target architecture.
+
+The system follows a pipeline architecture, wrapping the `goose` CLI process by default. It avoids modifying `goose` core directly, ensuring compatibility with future updates.
 
 ```mermaid
 graph LR
-    User((User)) <--> |Audio| VoiceBridge
-    subgraph VoiceBridge
-        STT[Speech-to-Text]
-        TTS[Text-to-Speech]
-        Orch[Orchestrator]
-    end
-    Orch <--> |StdIO / MCP| Goose[Goose Agent]
+    User((User)) <--> |Audio| ClientOS
+    User((User)) <--> |UI| WebUI
+    WebUI <--> |HTTP + WS| KestrelServer
+    KestrelServer <--> |StdIO / MCP| Goose[Goose Agent]
 ```
 
 ## Components
 
 ### 1. The Core: Goose Agent
 *   **Role**: The "Brain". Handles tool use, file editing, and reasoning.
-*   **Integration**: We run `goose` as a subprocess.
+*   **Integration**: We run `goose` as a subprocess via a Runner interface.
 *   **Communication**:
     *   **Input**: Standard Input (stdin) for user prompts.
     *   **Output**: Standard Output (stdout) for text responses.
-    *   **Future**: Potential integration via MCP (Model Context Protocol) if `goose` exposes a server mode suitable for this, but CLI wrapping is the immediate path.
+    *   **Future**: Potential integration via MCP (Model Context Protocol) if `goose` exposes a server mode suitable for this.
 
-### 2. Speech-to-Text (STT)
-*   **Engine**: `faster-whisper` (Python implementation of Whisper).
-*   **Why**: fast, accurate, runs locally (privacy + speed).
-*   **Config**: Use `small.en` or `base.en` models for low latency.
+### 2. Orchestrator (Session Core)
+*   **Role**: Owns session state, transcripts, and tool context.
+*   **Model Routing**: Assigns responsibilities to controller/coder/summarizer roles.
+*   **Stream Framing**: Emits structured records for UI and speech layers.
 
-### 3. Text-to-Speech (TTS)
-*   **Engine**: `piper` (https://github.com/rhasspy/piper).
-*   **Why**: Extremely fast, low resource usage, runs locally, high quality.
-*   **Models**: `.onnx` based voices (e.g., `en_US-lessac-medium`).
-*   **Data**: Existing models located in `piper-data/` directory.
+### 3. Speech-to-Text (STT)
+*   **Baseline**: Browser/OS speech recognition on the client device.
+*   **Why**: Keeps speech capture local to the user, reduces server complexity, and aligns with the web UI.
+*   **Target**: Optionally allow server-side STT for environments without reliable client STT.
 
-### 4. Orchestrator (The Bridge)
-*   **Language**: Python.
-*   **Responsibilities**:
-    *   **Audio Input**: Capture microphone stream (using `PyAudio` or `sounddevice`).
-    *   **VAD (Voice Activity Detection)**: Use `silero-vad` or `webrtcvad` to detect speech segments and avoid sending silence to STT.
-    *   **Process Management**: Spawn and monitor the `goose` subprocess.
-    *   **Text Processing**: Clean up `goose` output (e.g., remove progress bars or raw JSON logs) before sending to TTS.
+### 4. Text-to-Speech (TTS)
+*   **Baseline**: Browser/OS speech synthesis on the client device.
+*   **Why**: Keeps playback local, reduces latency, and supports mobile/desktop without extra server models.
+*   **Target**: Optional server-side TTS for consistent voice or offline use.
 
-## Data Flow
+### 5. Tooling Layer (MCP Gateway)
+*   **Registry**: Tools are described with metadata, permissions, and session scoping.
+*   **Invocation**: Each call is a structured event with input/output boundaries.
+*   **Transport**: Tools can be local, remote, or containerized.
 
-1.  **Listening**:
-    *   Mic input is buffered.
-    *   VAD detects speech start/end.
-    *   On "Speech End", buffer is sent to STT.
-2.  **Transcribing**:
-    *   STT engine converts audio buffer to string.
-    *   String is logged to console and written to `goose` stdin.
-3.  **Processing (Goose)**:
-    *   `goose` executes commands, thinks, and prints text.
-4.  **Speaking**:
-    *   Orchestrator reads `goose` stdout line-by-line.
-    *   Text is accumulated until a sentence boundary (.!?) or pause.
-    *   Sentence is sent to TTS.
-    *   TTS generates audio.
-    *   Audio is played immediately.
+### 6. Model Roles
+*   **Controller (Planner)**: Converts spoken intent into a plan and tool requests.
+*   **Coder (Executor)**: Implements code changes, executes tools, and interprets results.
+*   **Summarizer (Recap)**: Produces the end-of-task recap in the format:
+    *   "I did ...", "I learned ...", "Next ..."
+
+## Voice-First UX Contract
+*   **Spoken channel**: concise recaps, progress updates, and clarifying questions.
+*   **Visual channel**: full logs, tool outputs, and code blocks for review.
+*   **Speech safety**: avoid reading raw tool output; use short placeholders.
+
+## Conversational Orchestration (Phase 2)
+Beyond summaries, Kestrel should support a back-and-forth dialog about the work:
+*   **Clarifying intent**: The orchestrator asks short questions to refine goals before execution.
+*   **On-demand detail**: The user can request specific details (e.g., “read the script”) and the orchestrator provides the relevant content in speech-friendly form.
+*   **Context-aware follow-ups**: The orchestrator can explain what was done and propose next steps, not just recite a summary.
+
+## Data Flow (Baseline)
+
+1.  **Speech Input**:
+    *   The browser captures speech and transcribes to text using OS-provided STT.
+    *   The UI sends text to the server via WebSocket.
+2.  **Agent Processing**:
+    *   Kestrel forwards text to Goose over stdin.
+    *   Goose emits output over stdout/stderr, streamed back to the UI.
+3.  **UI Rendering**:
+    *   The UI renders full text, code blocks, and tool outputs in the chat view.
+4.  **Speech Output**:
+    *   The UI requests a summary from `/summarize` at end-of-turn.
+    *   The UI speaks the summary using browser/OS TTS.
+
+## Data Flow (Target)
+
+1.  **Speech Input**: Client STT produces text; server optionally validates/normalizes.
+2.  **Controller Planning**: Controller role produces a plan and tool requests.
+3.  **Execution**: Coder role executes, tools run through MCP gateway.
+4.  **Stream Framing**: Server emits framed records for UI rendering and summarizer.
+5.  **Speech Output**: Summarizer emits a recap; UI speaks it.
+
+## Stream Framing & Transcript
+*   Every output segment is framed with:
+    *   `type`: assistant | tool | system | summary
+    *   `role`: controller | coder | summarizer
+    *   `content`: full text
+    *   `metadata`: timestamps, tool identifiers, status
+*   Transcripts are stored per session for replay and debugging.
+
+## Testing & Validation
+*   Stream integrity tests: ordered, framed output with no resets.
+*   Summarizer tests: validate the recap format and tool/code mentions.
+*   MCP tests: validate tool scoping and permissions.
 
 ## Directory Structure Plan
 
