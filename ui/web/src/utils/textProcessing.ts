@@ -1,10 +1,12 @@
 export function cleanTextForTTS(text: string): string {
     if (!text) return "";
 
-    // Remove code blocks entirely for summary/TTS
+    // Replace code blocks with a short placeholder for TTS
     // We assume code blocks are enclosed in ``` ... ```
-    // We replace them with a brief pause marker or just space
-    let clean = text.replace(/```[\s\S]*?```/g, ' ');
+    let clean = text.replace(/```(\w+)?\n[\s\S]*?```/g, (_, lang) => {
+        const label = lang ? `${lang} code block` : 'code block';
+        return ` ${label} `;
+    });
     
     // Also remove inline code `...` if it's just syntax? 
     // Actually, inline code is often part of the sentence: "Use `npm install` to start".

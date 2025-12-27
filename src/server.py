@@ -72,7 +72,16 @@ async def get():
 async def summarize_text(request: SummarizeRequest):
     ollama_host = os.environ.get("OLLAMA_HOST", "http://ollama:11434")
     summarizer_model = os.environ.get("GOOSE_SUMMARIZER_MODEL", os.environ.get("GOOSE_MODEL", "qwen3-coder:30b-a3b-q4_K_M"))
-    prompt = f"Please provide a concise, one-sentence summary of the following text. Only return the summary itself, with no preamble or conversational text:\n\n---\n\n{request.text}"
+    prompt = (
+        "Summarize the assistant's response as a short, spoken end-of-task recap.\n"
+        "Include brief mentions of any code blocks, shell commands, file changes, or outputs.\n"
+        "Output exactly three sentences in this order:\n"
+        "1) \"I did ...\"\n"
+        "2) \"I learned ...\"\n"
+        "3) \"Next ...\"\n"
+        "Keep each sentence concise and factual. No bullet points or preamble.\n\n"
+        f"---\n{request.text}\n---"
+    )
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
