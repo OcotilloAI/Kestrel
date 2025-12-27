@@ -14,6 +14,7 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
     const rawBufferRef = useRef<string>("");
     const messageAccumulatorRef = useRef<string>(""); // Track full message for turn summary
     const turnTimerRef = useRef<any>(null);
+    const connectionIdRef = useRef<number>(0);
 
     const speak = useCallback(async (text: string, isSummary: boolean = false) => {
         let toSpeak = "";
@@ -59,6 +60,7 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
         const connect = () => {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}/ws/${sessionId}`;
+            const connectionId = ++connectionIdRef.current;
             
             console.log("Connecting to:", wsUrl);
             
@@ -133,6 +135,9 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
             };
 
             socket.onclose = (event) => {
+                if (socketRef.current !== socket || connectionIdRef.current !== connectionId) {
+                    return;
+                }
                 setStatus('disconnected');
                 const reason = (event.reason || '').toLowerCase();
                 const isTerminal = event.code === 1008 || reason.includes('session not found');
@@ -151,6 +156,7 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
                 }
                 // Attempt reconnect in 3s
                 reconnectTimeoutRef.current = setTimeout(() => {
+                    if (connectionIdRef.current !== connectionId) return;
                     console.log("Attempting reconnect...");
                     connect();
                 }, 3000);
@@ -166,8 +172,10 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
 
         return () => {
             shouldReconnectRef.current = false;
+            connectionIdRef.current += 1;
             if (socketRef.current) {
                 socketRef.current.close();
+                socketRef.current = null;
             }
             if (reconnectTimeoutRef.current) {
                 clearTimeout(reconnectTimeoutRef.current);

@@ -197,6 +197,10 @@ export const useSessions = () => {
                 method: 'POST',
             });
             if (!res.ok) throw new Error('Failed to open branch session');
+            const data = await res.json();
+            if (data?.session_id) {
+                setActiveSessionId(data.session_id);
+            }
             await fetchSessions();
         } catch (err: any) {
             setError(err.message);
