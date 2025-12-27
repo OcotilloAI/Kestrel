@@ -95,6 +95,11 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
                     setIsProcessing(false);
                     return;
                 }
+                if (eventType === 'detail') {
+                    addMessage('system', msgContent);
+                    speak(msgContent, false);
+                    return;
+                }
                 if (eventType === 'assistant') {
                     setIsProcessing(true);
                     if (turnTimerRef.current) clearTimeout(turnTimerRef.current);

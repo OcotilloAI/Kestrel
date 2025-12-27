@@ -247,6 +247,67 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             "metadata": metadata or {}
         }
 
+    def is_detail_request(text: str) -> Optional[str]:
+        match = re.match(r"^\s*read\s+(?:the\s+)?(?:file|script)\s+(.+)$", text, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        match = re.match(r"^\s*read\s+([\\w\\-./]+)$", text, re.IGNORECASE)
+        if match and "." in match.group(1):
+            return match.group(1).strip()
+        return None
+
+    async def send_detail_response(path_hint: str):
+        meta = manager.get_session_metadata(session_id) or {}
+        cwd = meta.get("cwd")
+        if not cwd:
+            return
+        file_path = os.path.abspath(os.path.join(cwd, path_hint))
+        if not file_path.startswith(os.path.abspath(cwd)):
+            detail_event = make_event(
+                event_type="detail",
+                role="controller",
+                content="Sorry, I can only read files within the session directory."
+            )
+            manager.record_event(session_id, detail_event)
+            await websocket.send_text(json.dumps(detail_event))
+            return
+        if not os.path.isfile(file_path):
+            detail_event = make_event(
+                event_type="detail",
+                role="controller",
+                content=f"I couldn't find {path_hint} in this session."
+            )
+            manager.record_event(session_id, detail_event)
+            await websocket.send_text(json.dumps(detail_event))
+            return
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as handle:
+                content = handle.read()
+        except Exception:
+            detail_event = make_event(
+                event_type="detail",
+                role="controller",
+                content=f"I couldn't read {path_hint}."
+            )
+            manager.record_event(session_id, detail_event)
+            await websocket.send_text(json.dumps(detail_event))
+            return
+
+        header = make_event(
+            event_type="detail",
+            role="controller",
+            content=f"Reading {path_hint}."
+        )
+        manager.record_event(session_id, header)
+        await websocket.send_text(json.dumps(header))
+
+        chunk_size = 1200
+        for idx in range(0, len(content), chunk_size):
+            chunk = content[idx: idx + chunk_size]
+            detail_event = make_event(event_type="detail", role="controller", content=chunk)
+            manager.record_event(session_id, detail_event)
+            await websocket.send_text(json.dumps(detail_event))
+
     welcome_event = make_event(
         event_type="system",
         role="system",
@@ -291,6 +352,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             print(f"[{session_id}] Received: {data}")
             event = make_event(event_type="user", role="user", content=data)
             manager.record_event(session_id, event)
+
+            detail_path = is_detail_request(data)
+            if detail_path:
+                await send_detail_response(detail_path)
+                continue
 
             decision = await controller_decision(data)
             if decision and isinstance(decision, dict):
