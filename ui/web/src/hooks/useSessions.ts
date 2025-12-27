@@ -116,6 +116,7 @@ export const useSessions = () => {
             if (!res.ok) throw new Error('Failed to delete branch');
             await fetchSessions();
             await fetchProjects();
+            await fetchBranches(projectBranch.project);
             if (activeSessionId === sessionId) {
                 setActiveSessionId(null);
             }
