@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, Optional, List, Any
 
 from goose_wrapper import GooseWrapper
+from goose_api_client import GooseApiClient, GooseApiSession
 from naming import generate_name
 
 class SessionManager:
@@ -17,6 +18,9 @@ class SessionManager:
         self._session_metadata: Dict[str, Dict[str, Any]] = {}
         self._transcripts: Dict[str, List[Dict[str, Any]]] = {}
         self._transcript_paths: Dict[str, Path] = {}
+        self.transport = os.environ.get("GOOSE_TRANSPORT", "cli")
+        self.goose_api_url = os.environ.get("GOOSE_SERVER_URL", "http://127.0.0.1:3001")
+        self.goose_api_secret = os.environ.get("GOOSE_SERVER_SECRET", "test")
         self.logger = logging.getLogger("SessionManager")
         
         # Determine root storage for sessions
@@ -124,11 +128,16 @@ class SessionManager:
         self._ensure_goosehints(final_cwd)
         self._ensure_gooseenv(final_cwd)
 
-        wrapper = GooseWrapper()
-        
         try:
-            wrapper.start(cwd=str(final_cwd))
-            self._sessions[session_id] = wrapper
+            if self.transport == "goosed":
+                client = GooseApiClient(self.goose_api_url, self.goose_api_secret)
+                goose_session_id = client.start_session(str(final_cwd))
+                wrapper = GooseApiSession(client, goose_session_id, str(final_cwd))
+                self._sessions[session_id] = wrapper
+            else:
+                wrapper = GooseWrapper()
+                wrapper.start(cwd=str(final_cwd))
+                self._sessions[session_id] = wrapper
             project_root = self._resolve_project_root(final_cwd)
             branch_name = None
             if project_root and self._is_relative_to(final_cwd, project_root):
@@ -139,6 +148,7 @@ class SessionManager:
                 "cwd": str(final_cwd),
                 "project_root": str(project_root) if project_root else None,
                 "branch_name": branch_name,
+                "goose_session_id": getattr(wrapper, "session_id", None),
             }
             self._transcripts[session_id] = []
             self._transcript_paths[session_id] = self._build_transcript_path(branch_name, project_root, session_id)

@@ -55,6 +55,22 @@ extensions:
 EOF
 fi
 
+if [ "${GOOSE_TRANSPORT}" = "goosed" ]; then
+    export GOOSE_HOST="${GOOSE_HOST:-0.0.0.0}"
+    export GOOSE_PORT="${GOOSE_PORT:-3001}"
+    export GOOSE_SERVER__SECRET_KEY="${GOOSE_SERVER__SECRET_KEY:-${GOOSE_SERVER_SECRET:-kestrel}}"
+    echo "Starting Goose server on ${GOOSE_HOST}:${GOOSE_PORT}..."
+    /usr/local/bin/goosed agent &
+    echo "Waiting for Goose server..."
+    for i in {1..30}; do
+        if curl -s -H "X-Secret-Key: ${GOOSE_SERVER__SECRET_KEY}" "http://127.0.0.1:${GOOSE_PORT}/sessions" > /dev/null; then
+            echo "Goose server is ready."
+            break
+        fi
+        sleep 1
+    done
+fi
+
 echo "Starting Kestrel Server..."
 # Add src to PYTHONPATH so 'from goose_wrapper import ...' works
 export PYTHONPATH=$PYTHONPATH:/app/src

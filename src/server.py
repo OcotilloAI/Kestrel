@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 from pydantic import BaseModel
 from session_manager import SessionManager
+from goose_api_client import GooseApiSession
 import os
 import httpx
 import json
@@ -417,71 +418,132 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     )
     manager.record_event(session_id, welcome_event)
     await websocket.send_text(json.dumps(welcome_event))
+    async def handle_goose_stream(user_text: str):
+        async for event in session.stream_reply(user_text):
+            if event.get("type") == "Error":
+                error_msg = event.get("error", "Unknown error")
+                error_event = make_event(event_type="system", role="system", content=error_msg, source="system")
+                manager.record_event(session_id, error_event)
+                await websocket.send_text(json.dumps(error_event))
+                continue
+            if event.get("type") != "Message":
+                continue
+            message = event.get("message", {})
+            contents = message.get("content", [])
+            text_chunks = []
+            for part in contents:
+                part_type = part.get("type")
+                if part_type == "text":
+                    text_chunks.append(part.get("text", ""))
+                elif part_type == "toolRequest":
+                    text_chunks.append(f"[tool request] {json.dumps(part.get('toolCall', {}), ensure_ascii=True)}")
+                elif part_type == "toolResponse":
+                    text_chunks.append(f"[tool response] {json.dumps(part.get('toolResult', {}), ensure_ascii=True)}")
+            content = "".join(text_chunks).strip()
+            if not content:
+                continue
+            response_event = make_event(event_type="assistant", role="coder", content=content, source="goose")
+            manager.record_event(session_id, response_event)
+            await websocket.send_text(json.dumps(response_event))
+
     try:
-        async def sender():
+        if isinstance(session, GooseApiSession):
             while True:
-                chunks = list(session.get_output())
-                for chunk in chunks:
-                    if chunk:
-                        if "starting session | provider:" in chunk or \
-                           "goose is running!" in chunk or \
-                           "Context: ○" in chunk or \
-                           "working directory:" in chunk or \
-                           "session id:" in chunk:
-                            continue
-                        event_type = "assistant"
-                        role = "coder"
-                        content = chunk
-                        if chunk.startswith("[LOG]"):
-                            event_type = "system"
-                            role = "system"
-                        source = "system" if event_type == "system" else "goose"
-                        event = make_event(event_type=event_type, role=role, content=content, source=source)
+                data = await websocket.receive_text()
+                print(f"[{session_id}] Received: {data}")
+                event = make_event(event_type="user", role="user", content=data, source="user")
+                manager.record_event(session_id, event)
+
+                detail_path = is_detail_request(data)
+                if detail_path:
+                    await send_detail_response(detail_path)
+                    continue
+
+                decision = await controller_decision(data)
+                if decision and isinstance(decision, dict):
+                    action = decision.get("action")
+                    if action == "clarify" and decision.get("question"):
+                        controller_event = make_event(
+                            event_type="assistant",
+                            role="controller",
+                            content=decision["question"],
+                            metadata={"controller_action": "clarify"},
+                            source="controller"
+                        )
+                        manager.record_event(session_id, controller_event)
+                        await websocket.send_text(json.dumps(controller_event))
+                        continue
+                    if action == "execute" and decision.get("task"):
+                        data = decision["task"]
+
+                await handle_goose_stream(data)
+        else:
+            async def sender():
+                while True:
+                    chunks = list(session.get_output())
+                    for chunk in chunks:
+                        if chunk:
+                            if "starting session | provider:" in chunk or \
+                               "goose is running!" in chunk or \
+                               "Context: ○" in chunk or \
+                               "working directory:" in chunk or \
+                               "session id:" in chunk:
+                                continue
+                            event_type = "assistant"
+                            role = "coder"
+                            content = chunk
+                            if chunk.startswith("[LOG]"):
+                                event_type = "system"
+                                role = "system"
+                            source = "system" if event_type == "system" else "goose"
+                            event = make_event(event_type=event_type, role=role, content=content, source=source)
+                            manager.record_event(session_id, event)
+                            await websocket.send_text(json.dumps(event))
+                    if not session.is_alive():
+                        code = session.return_code()
+                        error_msg = f"ERROR: Backend process exited unexpectedly with code {code}"
+                        print(error_msg)
+                        event = make_event(event_type="system", role="system", content=error_msg, source="system")
                         manager.record_event(session_id, event)
                         await websocket.send_text(json.dumps(event))
-                if not session.is_alive():
-                    code = session.return_code()
-                    error_msg = f"ERROR: Backend process exited unexpectedly with code {code}"
-                    print(error_msg)
-                    event = make_event(event_type="system", role="system", content=error_msg, source="system")
-                    manager.record_event(session_id, event)
-                    await websocket.send_text(json.dumps(event))
-                    await websocket.close()
-                    break
-                await asyncio.sleep(0.1)
-        sender_task = asyncio.create_task(sender())
-        while True:
-            data = await websocket.receive_text()
-            print(f"[{session_id}] Received: {data}")
-            event = make_event(event_type="user", role="user", content=data, source="user")
-            manager.record_event(session_id, event)
+                        await websocket.close()
+                        break
+                    await asyncio.sleep(0.1)
+            sender_task = asyncio.create_task(sender())
+            while True:
+                data = await websocket.receive_text()
+                print(f"[{session_id}] Received: {data}")
+                event = make_event(event_type="user", role="user", content=data, source="user")
+                manager.record_event(session_id, event)
 
-            detail_path = is_detail_request(data)
-            if detail_path:
-                await send_detail_response(detail_path)
-                continue
-
-            decision = await controller_decision(data)
-            if decision and isinstance(decision, dict):
-                action = decision.get("action")
-                if action == "clarify" and decision.get("question"):
-                    controller_event = make_event(
-                        event_type="assistant",
-                        role="controller",
-                        content=decision["question"],
-                        metadata={"controller_action": "clarify"},
-                        source="controller"
-                    )
-                    manager.record_event(session_id, controller_event)
-                    await websocket.send_text(json.dumps(controller_event))
+                detail_path = is_detail_request(data)
+                if detail_path:
+                    await send_detail_response(detail_path)
                     continue
-                if action == "execute" and decision.get("task"):
-                    data = decision["task"]
 
-            session.send_input(data)
+                decision = await controller_decision(data)
+                if decision and isinstance(decision, dict):
+                    action = decision.get("action")
+                    if action == "clarify" and decision.get("question"):
+                        controller_event = make_event(
+                            event_type="assistant",
+                            role="controller",
+                            content=decision["question"],
+                            metadata={"controller_action": "clarify"},
+                            source="controller"
+                        )
+                        manager.record_event(session_id, controller_event)
+                        await websocket.send_text(json.dumps(controller_event))
+                        continue
+                    if action == "execute" and decision.get("task"):
+                        data = decision["task"]
+
+                session.send_input(data)
     except WebSocketDisconnect:
         print(f"Client disconnected from {session_id}")
-        sender_task.cancel()
+        if 'sender_task' in locals():
+            sender_task.cancel()
     except Exception as e:
         print(f"Error in session {session_id}: {e}")
-        sender_task.cancel()
+        if 'sender_task' in locals():
+            sender_task.cancel()

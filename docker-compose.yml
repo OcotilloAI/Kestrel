@@ -11,6 +11,9 @@ services:
       - OLLAMA_HOST=http://ollama:11434
       - GOOSE_WORKDIR=/workspace
       - GOOSE_CONTROLLER_ENABLED=1
+      - GOOSE_TRANSPORT=goosed
+      - GOOSE_SERVER_URL=http://127.0.0.1:3001
+      - GOOSE_SERVER_SECRET=kestrel
     volumes:
       - ./workspace:/workspace
     working_dir: /app
