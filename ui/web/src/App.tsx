@@ -19,8 +19,11 @@ function App() {
 
     // Data Hooks
     const { sessions, activeSessionId, setActiveSessionId, createSession, deleteBranch, deleteBranchByName, deleteProject, createBranch, mergeBranch, syncBranch, openBranchSession, branchListByProject, fetchBranches, isLoading: sessionsLoading, hasLoaded: sessionsLoaded, projects, projectsLoaded } = useSessions();
+    const hasValidSession = !!activeSessionId && sessions.some(s => s.id === activeSessionId);
+    const effectiveSessionId =
+        isAuthenticated && sessionsLoaded && projectsLoaded && hasValidSession ? activeSessionId : null;
     const { messages, status, sendMessage, isProcessing, stopSpeaking, speakText, audioUnlocked, unlockAudio } = useChat(
-        isAuthenticated ? activeSessionId : null,
+        effectiveSessionId,
         () => setActiveSessionId(null)
     );
 

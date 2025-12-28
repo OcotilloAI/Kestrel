@@ -79,6 +79,10 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
     const loadTranscript = useCallback(async (id: string) => {
         try {
             const res = await fetch(`/session/${encodeURIComponent(id)}/transcript`);
+            if (res.status === 404) {
+                onSessionInvalid?.();
+                return;
+            }
             if (!res.ok) return;
             const data = await res.json();
             if (!Array.isArray(data) || data.length === 0) return;
@@ -112,7 +116,7 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
         } catch {
             return;
         }
-    }, []);
+    }, [onSessionInvalid]);
 
     const reconnectTimeoutRef = useRef<any>(null);
     const shouldReconnectRef = useRef<boolean>(true);
