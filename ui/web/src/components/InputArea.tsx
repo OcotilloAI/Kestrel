@@ -13,7 +13,7 @@ interface InputAreaProps {
 export const InputArea: React.FC<InputAreaProps> = ({ onSend, onInteraction, disabled, isProcessing }) => {
     const [text, setText] = useState('');
     const [isListening, setIsListening] = useState(false);
-    const [autoSend, setAutoSend] = useState(true);
+    const [autoSend, setAutoSend] = useState(false);
     const recognitionRef = useRef<any>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const sendTimerRef = useRef<any>(null);
@@ -49,7 +49,7 @@ export const InputArea: React.FC<InputAreaProps> = ({ onSend, onInteraction, dis
         const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (SpeechRecognition) {
             const recognition = new SpeechRecognition();
-            recognition.continuous = true;
+            recognition.continuous = autoSend;
             recognition.interimResults = true;
             recognition.lang = 'en-US';
 
@@ -73,12 +73,25 @@ export const InputArea: React.FC<InputAreaProps> = ({ onSend, onInteraction, dis
                                 setText('');
                             }
                         }, 3000);
+                    } else {
+                        setIsListening(false);
+                        recognition.stop();
                     }
                 }
             };
             
             recognition.onerror = (event: any) => { console.error("Speech recognition error", event.error); setIsListening(false); };
-            recognition.onend = () => { if (isListening) { try { recognition.start(); } catch(e) { setIsListening(false); } } else { setIsListening(false); } };
+            recognition.onend = () => {
+                if (isListening && autoSend) {
+                    try {
+                        recognition.start();
+                    } catch (e) {
+                        setIsListening(false);
+                    }
+                } else {
+                    setIsListening(false);
+                }
+            };
             recognitionRef.current = recognition;
         }
     }, [onSend, isListening, autoSend, onInteraction]);
@@ -144,6 +157,7 @@ export const InputArea: React.FC<InputAreaProps> = ({ onSend, onInteraction, dis
                         overflowY: 'hidden'
                     }}
                     disabled={disabled}
+                    data-testid="message-input"
                 />
                 <Button 
                     variant={isListening ? "danger" : "outline-secondary"} 
@@ -160,7 +174,8 @@ export const InputArea: React.FC<InputAreaProps> = ({ onSend, onInteraction, dis
                     className="rounded-circle ms-2 d-flex align-items-center justify-content-center"
                     style={{ width: '50px', height: '50px' }}
                     onClick={handleSend}
-                    disabled={disabled || !text.trim() || isProcessing}
+                    disabled={disabled || !text.trim()}
+                    data-testid="send-button"
                 >
                     {isProcessing ? <Spinner animation="border" size="sm" /> : <FaPaperPlane />}
                 </Button>

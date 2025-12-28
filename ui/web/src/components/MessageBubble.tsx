@@ -75,7 +75,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onSpeak }
     };
 
     return (
-        <div className={`d-flex mb-3 ${isUser ? 'justify-content-end' : 'justify-content-start'}`}>
+        <div className={`d-flex mb-3 ${isUser ? 'justify-content-end' : 'justify-content-start'}`} data-testid="message-bubble" data-role={message.role} data-source={message.source || ''}>
             <Card 
                 className={`border-0 shadow-sm ${isUser ? 'bg-primary text-white' : 'bg-white'}`}
                 style={{ maxWidth: '85%', borderRadius: '18px' }}

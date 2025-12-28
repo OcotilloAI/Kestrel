@@ -19,10 +19,13 @@ test('create and delete a branch from the sidebar', async ({ page }) => {
 
   const projectSelect = page.getByTestId('project-select');
   const projectOptions = await projectSelect.locator('option').allTextContents();
-  expect(projectOptions.length).toBeGreaterThan(0);
+  if (projectOptions.length === 0) {
+    await page.getByTestId('project-create-button').click();
+    await page.waitForTimeout(1200);
+  }
 
   await page.getByTestId('branch-name-input').fill(branchName);
-  await page.getByTestId('branch-create-button').click();
+  await page.getByTestId('branch-create-main-button').click();
 
   const branchItem = page.getByTestId(`branch-item-${branchName}`);
   await expect(branchItem).toBeVisible();

@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import json
+import base64
 from pathlib import Path
 from typing import Dict, Optional, List, Any
 
@@ -129,14 +130,18 @@ class SessionManager:
             wrapper.start(cwd=str(final_cwd))
             self._sessions[session_id] = wrapper
             project_root = self._resolve_project_root(final_cwd)
+            branch_name = None
+            if project_root and self._is_relative_to(final_cwd, project_root):
+                branch_name = final_cwd.name
             self._session_metadata[session_id] = {
                 "id": session_id,
                 "name": session_name,
                 "cwd": str(final_cwd),
                 "project_root": str(project_root) if project_root else None,
+                "branch_name": branch_name,
             }
             self._transcripts[session_id] = []
-            self._transcript_paths[session_id] = self._build_transcript_path(session_id, project_root)
+            self._transcript_paths[session_id] = self._build_transcript_path(branch_name, project_root, session_id)
             self.logger.info(f"Created session '{session_name}' ({session_id}) in {final_cwd}")
             return session_id
         except Exception as e:
@@ -244,6 +249,52 @@ class SessionManager:
         self.logger.info(f"Deleted branch {project_name}/{branch_name}")
         return True
 
+    def merge_branch_into_main(self, project_name: str, branch_name: str) -> bool:
+        if branch_name == "main":
+            raise ValueError("Cannot merge main into itself")
+        project_dir = self.workdir_root / project_name
+        main_dir = project_dir / "main"
+        branch_dir = project_dir / branch_name
+        if not main_dir.exists():
+            raise ValueError(f"Main branch does not exist for project {project_name}")
+        if not branch_dir.exists():
+            raise ValueError(f"Branch {branch_name} does not exist")
+
+        remote_name = f"kestrel_{branch_name}"
+        try:
+            subprocess.run(["git", "remote", "remove", remote_name], cwd=main_dir, check=False)
+            subprocess.run(["git", "remote", "add", remote_name, str(branch_dir)], cwd=main_dir, check=True)
+            subprocess.run(["git", "fetch", remote_name, branch_name], cwd=main_dir, check=True)
+            subprocess.run(["git", "merge", "--no-edit", "FETCH_HEAD"], cwd=main_dir, check=True)
+            subprocess.run(["git", "remote", "remove", remote_name], cwd=main_dir, check=False)
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Merge failed: {e}")
+            raise
+        return True
+
+    def sync_branch_from_main(self, project_name: str, branch_name: str) -> bool:
+        if branch_name == "main":
+            raise ValueError("Main is already up to date")
+        project_dir = self.workdir_root / project_name
+        main_dir = project_dir / "main"
+        branch_dir = project_dir / branch_name
+        if not main_dir.exists():
+            raise ValueError(f"Main branch does not exist for project {project_name}")
+        if not branch_dir.exists():
+            raise ValueError(f"Branch {branch_name} does not exist")
+
+        remote_name = "kestrel_main"
+        try:
+            subprocess.run(["git", "remote", "remove", remote_name], cwd=branch_dir, check=False)
+            subprocess.run(["git", "remote", "add", remote_name, str(main_dir)], cwd=branch_dir, check=True)
+            subprocess.run(["git", "fetch", remote_name, "main"], cwd=branch_dir, check=True)
+            subprocess.run(["git", "merge", "--no-edit", "FETCH_HEAD"], cwd=branch_dir, check=True)
+            subprocess.run(["git", "remote", "remove", remote_name], cwd=branch_dir, check=False)
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Sync failed: {e}")
+            raise
+        return True
+
     def _is_relative_to(self, path: Path, base: Path) -> bool:
         try:
             path.resolve().relative_to(base.resolve())
@@ -303,11 +354,12 @@ class SessionManager:
             return self.workdir_root / parts[0]
         return None
 
-    def _build_transcript_path(self, session_id: str, project_root: Optional[Path]) -> Path:
+    def _build_transcript_path(self, branch_name: Optional[str], project_root: Optional[Path], session_id: str) -> Path:
         if project_root:
-            session_dir = project_root / ".kestrel" / "sessions"
+            session_dir = project_root / ".kestrel"
             session_dir.mkdir(parents=True, exist_ok=True)
-            return session_dir / f"{session_id}.jsonl"
+            file_name = f"{branch_name}.jsonl" if branch_name else f"{session_id}.jsonl"
+            return session_dir / file_name
         return self.sessions_dir / f"{session_id}.jsonl"
 
     def record_event(self, session_id: str, event: Dict[str, Any]) -> None:
@@ -315,16 +367,57 @@ class SessionManager:
             self._transcripts[session_id] = []
             meta = self._session_metadata.get(session_id, {})
             project_root = Path(meta["project_root"]) if meta.get("project_root") else None
-            self._transcript_paths[session_id] = self._build_transcript_path(session_id, project_root)
-        self._transcripts[session_id].append(event)
+            branch_name = meta.get("branch_name")
+            self._transcript_paths[session_id] = self._build_transcript_path(branch_name, project_root, session_id)
+        content = event.get("content", "")
+        if content is None:
+            content = ""
+        if not isinstance(content, str):
+            content = str(content)
+        encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        stored_event = dict(event)
+        stored_event["source"] = stored_event.get("source") or stored_event.get("role") or stored_event.get("type") or "unknown"
+        stored_event["body_b64"] = encoded
+        stored_event.pop("content", None)
+        self._transcripts[session_id].append(stored_event)
         path = self._transcript_paths.get(session_id)
         if not path:
             return
         try:
             with path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(event, ensure_ascii=True) + "\n")
+                handle.write(json.dumps(stored_event, ensure_ascii=True) + "\n")
         except Exception:
             self.logger.exception("Failed to append transcript event")
 
     def get_transcript(self, session_id: str) -> List[Dict[str, Any]]:
-        return list(self._transcripts.get(session_id, []))
+        meta = self._session_metadata.get(session_id, {})
+        project_root = Path(meta["project_root"]) if meta.get("project_root") else None
+        branch_name = meta.get("branch_name")
+        path = self._build_transcript_path(branch_name, project_root, session_id)
+        events: List[Dict[str, Any]] = []
+        if path.exists():
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        events.append(json.loads(line))
+            except Exception:
+                self.logger.exception("Failed to read transcript file")
+        if not events:
+            events = list(self._transcripts.get(session_id, []))
+        decoded: List[Dict[str, Any]] = []
+        for event in events:
+            body_b64 = event.get("body_b64")
+            if body_b64:
+                try:
+                    content = base64.b64decode(body_b64.encode("ascii")).decode("utf-8")
+                except Exception:
+                    content = ""
+            else:
+                content = event.get("content", "")
+            decoded_event = dict(event)
+            decoded_event["content"] = content
+            decoded.append(decoded_event)
+        return decoded

@@ -15,6 +15,8 @@ interface SidebarProps {
     onDeleteBranchByName: (projectName: string, branchName: string) => void;
     onDeleteProject: (projectName: string) => void;
     onCreateBranch: (projectName: string, branchName?: string, sourceBranch?: string) => void;
+    onMergeBranch: (projectName: string, branchName: string) => void;
+    onSyncBranch: (projectName: string, branchName: string) => void;
     onOpenBranch: (projectName: string, branchName: string) => void;
     branchListByProject: Record<string, string[]>;
     fetchBranches: (projectName: string) => void;
@@ -26,11 +28,11 @@ interface SidebarProps {
 
 
 export const Sidebar: React.FC<SidebarProps> = (props) => {
-    const { sessions, activeSessionId, projectNames, onSelectSession, onCreateSession, onDeleteBranch, onDeleteBranchByName, onDeleteProject, onCreateBranch, onOpenBranch, branchListByProject, fetchBranches } = props;
+    const { sessions, activeSessionId, projectNames, onSelectSession, onCreateSession, onDeleteBranch, onDeleteBranchByName, onDeleteProject, onCreateBranch, onMergeBranch, onSyncBranch, onOpenBranch, branchListByProject, fetchBranches } = props;
     const [newBranchName, setNewBranchName] = useState('');
     const [sourceBranch, setSourceBranch] = useState('main');
     const [confirmState, setConfirmState] = useState<{
-        type: 'branch' | 'project';
+        type: 'branch' | 'project' | 'merge' | 'sync';
         projectName: string;
         branchName?: string;
         sessionId?: string;
@@ -96,6 +98,10 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
             } else {
                 onDeleteBranchByName(confirmState.projectName, confirmState.branchName);
             }
+        } else if (confirmState.type === 'merge' && confirmState.branchName) {
+            onMergeBranch(confirmState.projectName, confirmState.branchName);
+        } else if (confirmState.type === 'sync' && confirmState.branchName) {
+            onSyncBranch(confirmState.projectName, confirmState.branchName);
         }
         setConfirmState(null);
     };
@@ -104,6 +110,13 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
         if (!currentProjectName) return;
         const trimmed = newBranchName.trim();
         onCreateBranch(currentProjectName, trimmed || undefined, sourceBranch);
+        setNewBranchName('');
+    };
+
+    const handleCreateBranchFromMain = () => {
+        if (!currentProjectName) return;
+        const trimmed = newBranchName.trim();
+        onCreateBranch(currentProjectName, trimmed || undefined, 'main');
         setNewBranchName('');
     };
 
@@ -153,11 +166,15 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                         <Button size="sm" variant="outline-primary" onClick={handleCreateBranch} disabled={projectNames.length === 0} data-testid="branch-create-button">
                             Create Branch
                         </Button>
+                        <Button size="sm" variant="primary" onClick={handleCreateBranchFromMain} disabled={projectNames.length === 0} data-testid="branch-create-main-button">
+                            New Branch from Main
+                        </Button>
                     </div>
                     <ListGroup variant="flush" data-testid="branch-list">
                         {branchList.map(branchName => {
                             const session = sessions.find(s => s.name === `${currentProjectName}/${branchName}`);
                             const isActive = session?.id === activeSessionId;
+                            const isProtected = branchName === 'main';
                             return (
                             <ListGroup.Item 
                                 key={branchName} 
@@ -187,23 +204,65 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                                 className="d-flex justify-content-between align-items-center p-2 rounded mb-1 border-0"
                             >
                                 <span className="text-truncate">{branchName}</span>
-                                <Button 
-                                    variant="link" 
-                                    size="sm" 
-                                    className="p-0 text-danger" 
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (session) {
-                                            handleDeleteBranch(session.id, branchName);
-                                        } else {
-                                            handleDeleteBranchByName(branchName);
-                                        }
-                                    }}
-                                    title="Delete Branch"
-                                    data-testid={`branch-delete-${branchName}`}
-                                >
-                                    <FaTrash size={12} />
-                                </Button>
+                                <div className="d-flex align-items-center gap-2">
+                                    <Button
+                                        variant="link"
+                                        size="sm"
+                                        className="p-0 text-secondary"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (isProtected) return;
+                                            setConfirmState({
+                                                type: 'sync',
+                                                projectName: currentProjectName,
+                                                branchName,
+                                            });
+                                        }}
+                                        title="Sync from main"
+                                        data-testid={`branch-sync-${branchName}`}
+                                        disabled={isProtected}
+                                    >
+                                        Sync
+                                    </Button>
+                                    <Button
+                                        variant="link"
+                                        size="sm"
+                                        className="p-0 text-primary"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (isProtected) return;
+                                            setConfirmState({
+                                                type: 'merge',
+                                                projectName: currentProjectName,
+                                                branchName,
+                                            });
+                                        }}
+                                        title="Merge into main"
+                                        data-testid={`branch-merge-${branchName}`}
+                                        disabled={isProtected}
+                                    >
+                                        Merge
+                                    </Button>
+                                    <Button 
+                                        variant="link" 
+                                        size="sm" 
+                                        className="p-0 text-danger" 
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (isProtected) return;
+                                            if (session) {
+                                                handleDeleteBranch(session.id, branchName);
+                                            } else {
+                                                handleDeleteBranchByName(branchName);
+                                            }
+                                        }}
+                                        title="Delete Branch"
+                                        data-testid={`branch-delete-${branchName}`}
+                                        disabled={isProtected}
+                                    >
+                                        <FaTrash size={12} />
+                                    </Button>
+                                </div>
                             </ListGroup.Item>
                         )})}
                     </ListGroup>
@@ -224,13 +283,23 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
     const confirmModal = (
         <Modal show={!!confirmState} onHide={() => setConfirmState(null)} centered data-testid="confirm-modal">
             <Modal.Header closeButton>
-                <Modal.Title>
-                    {confirmState?.type === 'project' ? 'Delete Project' : 'Delete Branch'}
-                </Modal.Title>
+            <Modal.Title>
+                    {confirmState?.type === 'project'
+                        ? 'Delete Project'
+                        : confirmState?.type === 'merge'
+                            ? 'Merge Branch'
+                            : confirmState?.type === 'sync'
+                                ? 'Sync Branch'
+                                : 'Delete Branch'}
+            </Modal.Title>
             </Modal.Header>
             <Modal.Body>
                 {confirmState?.type === 'project' ? (
                     <>Delete project "{confirmState.projectName}" and all branches? This cannot be undone.</>
+                ) : confirmState?.type === 'merge' ? (
+                    <>Merge branch "{confirmState?.branchName}" into main? This will update main with the branch changes.</>
+                ) : confirmState?.type === 'sync' ? (
+                    <>Sync branch "{confirmState?.branchName}" with main? This will merge main into the branch.</>
                 ) : (
                     <>Delete branch "{confirmState?.branchName}"? This will remove the on-disk repo.</>
                 )}
@@ -239,8 +308,16 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                 <Button variant="secondary" onClick={() => setConfirmState(null)} data-testid="confirm-cancel">
                     Cancel
                 </Button>
-                <Button variant="danger" onClick={confirmDelete} data-testid="confirm-delete">
-                    Delete
+                <Button
+                    variant={confirmState?.type === 'merge' || confirmState?.type === 'sync' ? 'primary' : 'danger'}
+                    onClick={confirmDelete}
+                    data-testid="confirm-delete"
+                >
+                    {confirmState?.type === 'merge'
+                        ? 'Merge'
+                        : confirmState?.type === 'sync'
+                            ? 'Sync'
+                            : 'Delete'}
                 </Button>
             </Modal.Footer>
         </Modal>

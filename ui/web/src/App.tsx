@@ -18,13 +18,15 @@ function App() {
     const [showSidebar, setShowSidebar] = useState(false);
 
     // Data Hooks
-    const { sessions, activeSessionId, setActiveSessionId, createSession, deleteBranch, deleteBranchByName, deleteProject, createBranch, openBranchSession, branchListByProject, fetchBranches, isLoading: sessionsLoading, hasLoaded: sessionsLoaded, projects, projectsLoaded } = useSessions();
-    const { messages, status, sendMessage, isProcessing, stopSpeaking, speakText } = useChat(
+    const { sessions, activeSessionId, setActiveSessionId, createSession, deleteBranch, deleteBranchByName, deleteProject, createBranch, mergeBranch, syncBranch, openBranchSession, branchListByProject, fetchBranches, isLoading: sessionsLoading, hasLoaded: sessionsLoaded, projects, projectsLoaded } = useSessions();
+    const { messages, status, sendMessage, isProcessing, stopSpeaking, speakText, audioUnlocked, unlockAudio } = useChat(
         isAuthenticated ? activeSessionId : null,
         () => setActiveSessionId(null)
     );
 
     const activeSession = sessions.find(s => s.id === activeSessionId);
+    const activeBranchName = activeSession?.name.split('/')[1];
+    const isMainBranch = activeBranchName === 'main';
 
     const didInitRef = useRef(false);
 
@@ -40,7 +42,7 @@ function App() {
         if (didInitRef.current) return;
         const lastActiveId = localStorage.getItem('kestrel_active_session');
         const lastActiveCwd = localStorage.getItem('kestrel_active_session_cwd');
-        if (lastActiveId && sessions.some(s => s.id === lastActiveId)) {
+        if (lastActiveId) {
             if (activeSessionId !== lastActiveId) setActiveSessionId(lastActiveId);
         } else if (sessions.length > 0 && !activeSessionId) {
             if (lastActiveCwd) {
@@ -57,6 +59,9 @@ function App() {
             createSession(lastActiveCwd).then(id => { if (id) setActiveSessionId(id); }).catch(() => {
                 localStorage.removeItem('kestrel_active_session_cwd');
             });
+        } else if (sessions.length === 0 && !activeSessionId && projects.length > 0) {
+            const projectRoot = `/workspace/${projects[0]}/main`;
+            createSession(projectRoot).then(id => { if (id) setActiveSessionId(id); }).catch(console.error);
         } else if (sessions.length === 0 && !activeSessionId && projects.length === 0) {
             createSession('.').then(id => { if (id) setActiveSessionId(id); }).catch(console.error);
         }
@@ -66,6 +71,7 @@ function App() {
     // Keep active session in sync after create/delete without forcing full re-init
     useEffect(() => {
         if (sessionsLoading || !sessionsLoaded || !projectsLoaded || !isAuthenticated) return;
+        if (!didInitRef.current && !activeSessionId) return;
         if (activeSessionId && !sessions.some(s => s.id === activeSessionId)) {
             setActiveSessionId(null);
             return;
@@ -76,17 +82,18 @@ function App() {
     }, [sessions, activeSessionId, sessionsLoading, sessionsLoaded, projectsLoaded, isAuthenticated, setActiveSessionId]);
 
     useEffect(() => {
-        if (activeSessionId && sessions.some(s => s.id === activeSessionId)) {
+        if (!isAuthenticated || !didInitRef.current) return;
+        if (activeSessionId) {
             localStorage.setItem('kestrel_active_session', activeSessionId);
             const session = sessions.find(s => s.id === activeSessionId);
             if (session?.cwd) {
                 localStorage.setItem('kestrel_active_session_cwd', session.cwd);
             }
-        } else if (!activeSessionId) {
+        } else {
             localStorage.removeItem('kestrel_active_session');
             localStorage.removeItem('kestrel_active_session_cwd');
         }
-    }, [activeSessionId, sessions]);
+    }, [activeSessionId, sessions, isAuthenticated]);
 
     useEffect(() => {
         const updateAppHeight = () => {
@@ -133,6 +140,8 @@ function App() {
                 onDeleteBranchByName={deleteBranchByName}
                 onDeleteProject={deleteProject}
                 onCreateBranch={createBranch}
+                onMergeBranch={mergeBranch}
+                onSyncBranch={syncBranch}
                 onOpenBranch={openBranchSession}
                 branchListByProject={branchListByProject}
                 fetchBranches={fetchBranches}
@@ -145,11 +154,14 @@ function App() {
                     onSpeak={speakText} 
                     isProcessing={isProcessing}
                     sessionName={activeSession?.name}
+                    audioUnlocked={audioUnlocked}
+                    onUnlockAudio={unlockAudio}
+                    readOnlyMessage={isMainBranch ? 'Main is read-only' : undefined}
                 />
                 <InputArea 
                     onSend={(text) => sendMessage(text)} 
                     onInteraction={stopSpeaking}
-                    disabled={status !== 'connected'} 
+                    disabled={status !== 'connected' || isMainBranch} 
                     isProcessing={isProcessing} 
                 />
             </div>

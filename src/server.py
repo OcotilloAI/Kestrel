@@ -39,6 +39,12 @@ class RenameConfig(BaseModel):
 class SummarizeRequest(BaseModel):
     text: str
 
+class ClientEventRequest(BaseModel):
+    type: str
+    role: str
+    source: str
+    content: str
+
 class BranchConfig(BaseModel):
     name: Optional[str] = None
     source_branch: Optional[str] = "main"
@@ -80,6 +86,7 @@ async def summarize_text(request: SummarizeRequest):
     prompt = (
         "Summarize the assistant's response as a short, spoken end-of-task recap.\n"
         "Include brief mentions of any code blocks, shell commands, file changes, or outputs.\n"
+        "Only use facts present in the text; do not invent details.\n"
         "Output exactly three sentences in this order:\n"
         "1) \"I did ...\"\n"
         "2) \"I learned ...\"\n"
@@ -95,7 +102,40 @@ async def summarize_text(request: SummarizeRequest):
                 and "Next" in text
             )
 
-        if raw_summary and has_format(raw_summary):
+        def extract_required_phrases(source: str) -> list[str]:
+            phrases: list[str] = []
+            for match in re.findall(r"\"([^\"]{3,})\"", source):
+                phrases.append(match)
+            for match in re.findall(r"'([^']{3,})'", source):
+                phrases.append(match)
+            for match in re.findall(r"`([^`]{3,})`", source):
+                phrases.append(match)
+            return phrases
+
+        def mentions_source(text: str, source: str) -> bool:
+            tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]+", source.lower())
+            stopwords = {
+                "the", "and", "with", "that", "this", "from", "into", "were", "then",
+                "just", "only", "also", "have", "has", "had", "your", "you", "for",
+                "are", "was", "will", "would", "could", "should", "about", "what",
+                "when", "where", "which", "able", "make", "made", "over", "under",
+                "after", "before", "into", "onto", "from", "been", "being", "more",
+            }
+            keywords = [t for t in tokens if t not in stopwords and len(t) > 3]
+            if not keywords:
+                return True
+            haystack = text.lower()
+            hits = sum(1 for k in keywords[:20] if k in haystack)
+            return hits >= 2
+
+        def includes_required_phrases(text: str, source: str) -> bool:
+            phrases = extract_required_phrases(source)
+            if not phrases:
+                return True
+            haystack = text.lower()
+            return all(p.lower() in haystack for p in phrases[:2])
+
+        if raw_summary and has_format(raw_summary) and mentions_source(raw_summary, source_text) and includes_required_phrases(raw_summary, source_text):
             return raw_summary.strip()
 
         code_blocks = len(re.findall(r"```[\\s\\S]*?```", source_text))
@@ -124,6 +164,22 @@ async def summarize_text(request: SummarizeRequest):
         raise HTTPException(status_code=500, detail=f"Failed to connect to Ollama: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Summarization failed: {e}")
+
+@app.post("/session/{session_id}/event")
+async def record_client_event(session_id: str, request: ClientEventRequest):
+    session = manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    event = {
+        "type": request.type,
+        "role": request.role,
+        "content": request.content,
+        "timestamp": time.time(),
+        "metadata": {},
+        "source": request.source
+    }
+    manager.record_event(session_id, event)
+    return {"status": "recorded"}
 
 async def controller_decision(user_text: str) -> Optional[dict]:
     if not CONTROLLER_ENABLED:
@@ -199,6 +255,28 @@ async def delete_branch(project_name: str, branch_name: str):
         return {"status": "deleted", "project": project_name, "branch": branch_name}
     raise HTTPException(status_code=404, detail="Branch not found")
 
+@app.post("/project/{project_name}/branch/{branch_name}/merge")
+async def merge_branch(project_name: str, branch_name: str):
+    try:
+        if manager.merge_branch_into_main(project_name, branch_name):
+            return {"status": "merged", "project": project_name, "branch": branch_name}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Merge failed: {e}")
+    raise HTTPException(status_code=404, detail="Branch not found")
+
+@app.post("/project/{project_name}/branch/{branch_name}/sync")
+async def sync_branch(project_name: str, branch_name: str):
+    try:
+        if manager.sync_branch_from_main(project_name, branch_name):
+            return {"status": "synced", "project": project_name, "branch": branch_name}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Sync failed: {e}")
+    raise HTTPException(status_code=404, detail="Branch not found")
+
 @app.post("/project/{project_name}/branch/{branch_name}/session")
 async def open_branch_session(project_name: str, branch_name: str):
     branch_dir = manager.workdir_root / project_name / branch_name
@@ -231,6 +309,13 @@ async def rename_session(session_id: str, config: RenameConfig):
         return {"status": "renamed", "session_id": session_id, "new_name": config.name}
     raise HTTPException(status_code=404, detail="Session not found")
 
+@app.get("/session/{session_id}/transcript")
+async def get_session_transcript(session_id: str):
+    session = manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return manager.get_transcript(session_id)
+
 @app.delete("/session/{session_id}")
 async def kill_session(session_id: str, request: Request):
     print(f"--- KILL SESSION REQUEST RECEIVED for {session_id} ---")
@@ -249,13 +334,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         return
     await websocket.accept()
     print(f"Client connected to session {session_id}")
-    def make_event(event_type: str, role: str, content: str, metadata: Optional[dict] = None):
+    def make_event(event_type: str, role: str, content: str, metadata: Optional[dict] = None, source: Optional[str] = None):
         return {
             "type": event_type,
             "role": role,
             "content": content,
             "timestamp": time.time(),
-            "metadata": metadata or {}
+            "metadata": metadata or {},
+            "source": source or role or event_type
         }
 
     def is_detail_request(text: str) -> Optional[str]:
@@ -277,7 +363,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             detail_event = make_event(
                 event_type="detail",
                 role="controller",
-                content="Sorry, I can only read files within the session directory."
+                content="Sorry, I can only read files within the session directory.",
+                source="detail"
             )
             manager.record_event(session_id, detail_event)
             await websocket.send_text(json.dumps(detail_event))
@@ -286,7 +373,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             detail_event = make_event(
                 event_type="detail",
                 role="controller",
-                content=f"I couldn't find {path_hint} in this session."
+                content=f"I couldn't find {path_hint} in this session.",
+                source="detail"
             )
             manager.record_event(session_id, detail_event)
             await websocket.send_text(json.dumps(detail_event))
@@ -298,7 +386,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             detail_event = make_event(
                 event_type="detail",
                 role="controller",
-                content=f"I couldn't read {path_hint}."
+                content=f"I couldn't read {path_hint}.",
+                source="detail"
             )
             manager.record_event(session_id, detail_event)
             await websocket.send_text(json.dumps(detail_event))
@@ -307,7 +396,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         header = make_event(
             event_type="detail",
             role="controller",
-            content=f"Reading {path_hint}."
+            content=f"Reading {path_hint}.",
+            source="detail"
         )
         manager.record_event(session_id, header)
         await websocket.send_text(json.dumps(header))
@@ -315,14 +405,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         chunk_size = 1200
         for idx in range(0, len(content), chunk_size):
             chunk = content[idx: idx + chunk_size]
-            detail_event = make_event(event_type="detail", role="controller", content=chunk)
+            detail_event = make_event(event_type="detail", role="controller", content=chunk, source="detail")
             manager.record_event(session_id, detail_event)
             await websocket.send_text(json.dumps(detail_event))
 
     welcome_event = make_event(
         event_type="system",
         role="system",
-        content="Welcome to Kestrel, Goose is ready to help you code from Kestrel's translations."
+        content="Welcome to Kestrel, Goose is ready to help you code from Kestrel's translations.",
+        source="system"
     )
     manager.record_event(session_id, welcome_event)
     await websocket.send_text(json.dumps(welcome_event))
@@ -344,14 +435,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         if chunk.startswith("[LOG]"):
                             event_type = "system"
                             role = "system"
-                        event = make_event(event_type=event_type, role=role, content=content)
+                        source = "system" if event_type == "system" else "goose"
+                        event = make_event(event_type=event_type, role=role, content=content, source=source)
                         manager.record_event(session_id, event)
                         await websocket.send_text(json.dumps(event))
                 if not session.is_alive():
                     code = session.return_code()
                     error_msg = f"ERROR: Backend process exited unexpectedly with code {code}"
                     print(error_msg)
-                    event = make_event(event_type="system", role="system", content=error_msg)
+                    event = make_event(event_type="system", role="system", content=error_msg, source="system")
                     manager.record_event(session_id, event)
                     await websocket.send_text(json.dumps(event))
                     await websocket.close()
@@ -361,7 +453,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         while True:
             data = await websocket.receive_text()
             print(f"[{session_id}] Received: {data}")
-            event = make_event(event_type="user", role="user", content=data)
+            event = make_event(event_type="user", role="user", content=data, source="user")
             manager.record_event(session_id, event)
 
             detail_path = is_detail_request(data)
@@ -377,7 +469,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         event_type="assistant",
                         role="controller",
                         content=decision["question"],
-                        metadata={"controller_action": "clarify"}
+                        metadata={"controller_action": "clarify"},
+                        source="controller"
                     )
                     manager.record_event(session_id, controller_event)
                     await websocket.send_text(json.dumps(controller_event))

@@ -3,7 +3,9 @@ import type { Session } from '../types';
 
 export const useSessions = () => {
     const [sessions, setSessions] = useState<Session[]>([]);
-    const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+    const [activeSessionId, setActiveSessionId] = useState<string | null>(
+        () => localStorage.getItem('kestrel_active_session')
+    );
     const [isLoading, setIsLoading] = useState(false);
     const [hasLoaded, setHasLoaded] = useState(false);
     const [projects, setProjects] = useState<string[]>([]);
@@ -182,6 +184,40 @@ export const useSessions = () => {
         }
     };
 
+    const mergeBranch = async (projectName: string, branchName: string) => {
+        try {
+            const res = await fetch(`/project/${encodeURIComponent(projectName)}/branch/${encodeURIComponent(branchName)}/merge`, {
+                method: 'POST',
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || 'Failed to merge branch');
+            }
+            await fetchSessions();
+            await fetchBranches(projectName);
+        } catch (err: any) {
+            setError(err.message);
+            throw err;
+        }
+    };
+
+    const syncBranch = async (projectName: string, branchName: string) => {
+        try {
+            const res = await fetch(`/project/${encodeURIComponent(projectName)}/branch/${encodeURIComponent(branchName)}/sync`, {
+                method: 'POST',
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || 'Failed to sync branch');
+            }
+            await fetchSessions();
+            await fetchBranches(projectName);
+        } catch (err: any) {
+            setError(err.message);
+            throw err;
+        }
+    };
+
     const fetchBranches = useCallback(async (projectName: string) => {
         try {
             const res = await fetch(`/project/${encodeURIComponent(projectName)}/branches`);
@@ -225,6 +261,8 @@ export const useSessions = () => {
         deleteProject,
         createBranch,
         openBranchSession,
+        mergeBranch,
+        syncBranch,
         fetchSessions,
         isLoading,
         hasLoaded,

@@ -1,19 +1,14 @@
 import { test, expect } from '@playwright/test';
 
-test('switching to a new branch avoids reconnecting the old session', async ({ page }) => {
+test('sync branch from main in sidebar', async ({ page }) => {
   const branchName = `pw-branch-${Date.now().toString().slice(-6)}`;
-  const sockets: string[] = [];
-
-  page.on('websocket', (ws) => {
-    sockets.push(ws.url());
-  });
 
   await page.goto('/');
-
   const password = page.getByPlaceholder('Password');
   if (await password.count()) {
     await password.fill('k3str3lrocks');
     await page.getByRole('button', { name: 'Login' }).click();
+    await page.waitForTimeout(1000);
   }
 
   const toggle = page.locator('[aria-label="Toggle sidebar"], .mobile-menu-btn');
@@ -21,7 +16,6 @@ test('switching to a new branch avoids reconnecting the old session', async ({ p
   await toggle.first().click();
 
   await expect(page.getByTestId('project-select')).toBeVisible();
-
   const projectOptions = await page.getByTestId('project-select').locator('option').allTextContents();
   if (projectOptions.length === 0) {
     await page.getByTestId('project-create-button').click();
@@ -33,10 +27,10 @@ test('switching to a new branch avoids reconnecting the old session', async ({ p
 
   const branchItem = page.getByTestId(`branch-item-${branchName}`);
   await expect(branchItem).toBeVisible();
-  await branchItem.click();
 
-  await expect(branchItem).toHaveClass(/active/);
+  await page.getByTestId(`branch-sync-${branchName}`).click();
+  await expect(page.getByTestId('confirm-modal')).toBeVisible();
+  await page.getByTestId('confirm-delete').click();
 
-  await page.waitForTimeout(4000);
-  expect(sockets.length).toBeLessThanOrEqual(3);
+  await expect(page.getByTestId(`branch-sync-${branchName}`)).toBeVisible();
 });

@@ -10,6 +10,7 @@ export interface Message {
     role: 'user' | 'agent' | 'system';
     content: string;
     timestamp: number;
+    source?: string;
 }
 
 export type SessionMode = 'continue' | 'duplicate' | 'new';
