@@ -430,4 +430,52 @@ class SessionManager:
             decoded_event = dict(event)
             decoded_event["content"] = content
             decoded.append(decoded_event)
-        return decoded
+        return self._aggregate_transcript(decoded)
+
+    def _aggregate_transcript(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        aggregated: List[Dict[str, Any]] = []
+        buffer_event: Optional[Dict[str, Any]] = None
+        buffer_key: Optional[tuple] = None
+
+        def flush():
+            nonlocal buffer_event, buffer_key
+            if buffer_event:
+                aggregated.append(buffer_event)
+            buffer_event = None
+            buffer_key = None
+
+        def merge_text(prev: str, nxt: str) -> str:
+            if not prev:
+                return nxt
+            if not nxt:
+                return prev
+            if prev.endswith(("\n", " ")):
+                return prev + nxt
+            if nxt.startswith((" ", "\n", "\t", "'", ".", ",", "!", "?", ":", ";", ")", "]", "}", "%")):
+                return prev + nxt
+            return f"{prev} {nxt}"
+
+        for event in events:
+            content = event.get("content", "")
+            if content is None:
+                content = ""
+            if not isinstance(content, str):
+                content = str(content)
+            if content == "":
+                continue
+
+            key = (event.get("type"), event.get("role"), event.get("source"))
+            mergeable = event.get("type") in {"assistant", "detail", "system"}
+
+            if buffer_event and buffer_key == key and mergeable:
+                buffer_event["content"] = merge_text(buffer_event.get("content", ""), content)
+                buffer_event["timestamp"] = event.get("timestamp", buffer_event.get("timestamp"))
+                continue
+
+            flush()
+            buffer_event = dict(event)
+            buffer_event["content"] = content
+            buffer_key = key
+
+        flush()
+        return aggregated

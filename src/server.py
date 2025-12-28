@@ -2,7 +2,7 @@ import asyncio
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 from pydantic import BaseModel
@@ -317,6 +317,23 @@ async def get_session_transcript(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
     return manager.get_transcript(session_id)
 
+@app.get("/session/{session_id}/transcript/download")
+async def download_session_transcript(session_id: str):
+    session = manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    events = manager.get_transcript(session_id)
+    lines = []
+    for event in events:
+        source = event.get("source") or event.get("role") or event.get("type") or "unknown"
+        role = event.get("role") or "unknown"
+        content = str(event.get("content", "")).rstrip()
+        if not content:
+            continue
+        lines.append(f"[{source}/{role}] {content}")
+    body = "\n\n".join(lines)
+    return PlainTextResponse(body)
+
 @app.delete("/session/{session_id}")
 async def kill_session(session_id: str, request: Request):
     print(f"--- KILL SESSION REQUEST RECEIVED for {session_id} ---")
@@ -439,7 +456,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     text_chunks.append(f"[tool request] {json.dumps(part.get('toolCall', {}), ensure_ascii=True)}")
                 elif part_type == "toolResponse":
                     text_chunks.append(f"[tool response] {json.dumps(part.get('toolResult', {}), ensure_ascii=True)}")
-            content = "".join(text_chunks).strip()
+            content = "".join(text_chunks)
             if not content:
                 continue
             response_event = make_event(event_type="assistant", role="coder", content=content, source="goose")
