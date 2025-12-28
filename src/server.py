@@ -160,6 +160,24 @@ async def generate_summary(source_text: str) -> str:
         raw_summary = data.get("response", "").strip()
         return normalize_summary(raw_summary, source_text)
 
+async def generate_recap(source_text: str) -> str:
+    ollama_host = os.environ.get("OLLAMA_HOST", "http://ollama:11434")
+    summarizer_model = os.environ.get("GOOSE_SUMMARIZER_MODEL", os.environ.get("GOOSE_MODEL", "qwen3-coder:30b-a3b-q4_K_M"))
+    prompt = (
+        "Provide a longer recap for the user-visible transcript.\n"
+        "Include what was done, key outputs, and what remains to do.\n"
+        "Use short paragraphs. Do not invent details.\n\n"
+        f"---\n{source_text}\n---"
+    )
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            f"{ollama_host}/api/generate",
+            json={"model": summarizer_model, "prompt": prompt, "stream": False},
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data.get("response", "").strip()
+
 @app.post("/summarize")
 async def summarize_text(request: SummarizeRequest):
     try:
@@ -431,14 +449,24 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             manager.record_event(session_id, detail_event)
             await websocket.send_text(json.dumps(detail_event))
 
+    meta = manager.get_session_metadata(session_id) or {}
+    cwd = meta.get("cwd", "unknown")
     welcome_event = make_event(
         event_type="system",
         role="system",
-        content="Welcome to Kestrel, Goose is ready to help you code from Kestrel's translations.",
+        content="Hello, I'm Kestrel. What are we working on today?",
         source="system"
     )
     manager.record_event(session_id, welcome_event)
     await websocket.send_text(json.dumps(welcome_event))
+    cwd_event = make_event(
+        event_type="system",
+        role="system",
+        content=f"Working directory: {cwd}",
+        source="system",
+    )
+    manager.record_event(session_id, cwd_event)
+    await websocket.send_text(json.dumps(cwd_event))
     async def handle_goose_stream(user_text: str):
         assistant_chunks: list[str] = []
         async for event in session.stream_reply(user_text):
@@ -459,17 +487,32 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     text_chunks.append(part.get("text", ""))
                 elif part_type == "toolRequest":
                     tool_call = part.get("toolCall", {})
-                    tool_name = tool_call.get("name", "unknown_tool")
+                    tool_value = tool_call.get("value", {})
+                    tool_name = tool_call.get("name") or tool_value.get("name") or "unknown_tool"
                     tool_payload = json.dumps(tool_call, ensure_ascii=True, indent=2)
-                    tool_content = f"Tool request: {tool_name}\n```json\n{tool_payload}\n```"
-                    tool_event = make_event(event_type="tool", role="system", content=tool_content, source="tool")
+                    tool_content = f"Tool request: {tool_name}\nWorking directory: {cwd}\n```json\n{tool_payload}\n```"
+                    tool_event = make_event(
+                        event_type="tool",
+                        role="system",
+                        content=tool_content,
+                        metadata={"tool_name": tool_name, "cwd": cwd},
+                        source="tool",
+                    )
                     manager.record_event(session_id, tool_event)
                     await websocket.send_text(json.dumps(tool_event))
                 elif part_type == "toolResponse":
                     tool_result = part.get("toolResult", {})
+                    tool_value = tool_result.get("value", {})
+                    tool_name = tool_result.get("name") or tool_value.get("name") or "unknown_tool"
                     tool_payload = json.dumps(tool_result, ensure_ascii=True, indent=2)
-                    tool_content = f"Tool response\n```json\n{tool_payload}\n```"
-                    tool_event = make_event(event_type="tool", role="system", content=tool_content, source="tool")
+                    tool_content = f"Tool response: {tool_name}\nWorking directory: {cwd}\n```json\n{tool_payload}\n```"
+                    tool_event = make_event(
+                        event_type="tool",
+                        role="system",
+                        content=tool_content,
+                        metadata={"tool_name": tool_name, "cwd": cwd},
+                        source="tool",
+                    )
                     manager.record_event(session_id, tool_event)
                     await websocket.send_text(json.dumps(tool_event))
             content = "".join(text_chunks)
@@ -486,6 +529,10 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 summary_event = make_event(event_type="summary", role="system", content=summary, source="summary")
                 manager.record_event(session_id, summary_event)
                 await websocket.send_text(json.dumps(summary_event))
+                recap = await generate_recap(combined)
+                recap_event = make_event(event_type="recap", role="system", content=recap, source="recap")
+                manager.record_event(session_id, recap_event)
+                await websocket.send_text(json.dumps(recap_event))
             except Exception as e:
                 error_event = make_event(
                     event_type="system",
@@ -526,7 +573,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     if action == "execute" and decision.get("task"):
                         data = decision["task"]
 
-                await handle_goose_stream(data)
+                goose_prompt = (
+                    "You are Goose, the coding agent. Build and validate the user's request.\n"
+                    "Start by proposing a short task list in a fenced block labeled 'tasks',\n"
+                    "then ask whether to proceed if any confirmation is needed.\n"
+                    "If critical information is missing, ask up to three focused questions.\n"
+                    "When you finish, provide a concise completion statement.\n\n"
+                    f"User request:\n{data}\n"
+                )
+                await handle_goose_stream(goose_prompt)
         else:
             async def sender():
                 while True:
@@ -588,7 +643,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     if action == "execute" and decision.get("task"):
                         data = decision["task"]
 
-                session.send_input(data)
+                goose_prompt = (
+                    "You are Goose, the coding agent. Build and validate the user's request.\n"
+                    "Start by proposing a short task list in a fenced block labeled 'tasks',\n"
+                    "then ask whether to proceed if any confirmation is needed.\n"
+                    "If critical information is missing, ask up to three focused questions.\n"
+                    "When you finish, provide a concise completion statement.\n\n"
+                    f"User request:\n{data}\n"
+                )
+                session.send_input(goose_prompt)
     except WebSocketDisconnect:
         print(f"Client disconnected from {session_id}")
         if 'sender_task' in locals():

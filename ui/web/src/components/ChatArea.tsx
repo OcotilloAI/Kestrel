@@ -21,7 +21,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ messages, status, onSpeak, i
     const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
     const [activePageIdx, setActivePageIdx] = useState(0);
     const [showFilters, setShowFilters] = useState(false);
-    const expectedSources = ['user', 'goose', 'controller', 'system', 'detail', 'summary', 'tool'];
+    const expectedSources = ['user', 'goose', 'controller', 'system', 'detail', 'summary', 'recap', 'tool'];
     const [enabledSources, setEnabledSources] = useState<Record<string, boolean>>(() => (
         expectedSources.reduce((acc, source) => {
             acc[source] = true;

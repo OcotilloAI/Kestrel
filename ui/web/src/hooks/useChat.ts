@@ -195,6 +195,10 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
                     setIsProcessing(false);
                     return;
                 }
+                if (eventType === 'recap') {
+                    addMessage('system', msgContent, parsed?.source || 'recap');
+                    return;
+                }
                 if (eventType === 'assistant') {
                     if (msgContent.startsWith("[LOG]")) {
                         console.log("Backend Log:", msgContent);

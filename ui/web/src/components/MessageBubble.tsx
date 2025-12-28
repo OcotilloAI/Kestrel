@@ -15,6 +15,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onSpeak }
     const isSystem = message.role === 'system';
     const isTool = message.source === 'tool';
     const isSummary = message.source === 'summary';
+    const isRecap = message.source === 'recap';
     
     if (isSystem && !isTool && !isSummary) {
         return (
@@ -53,12 +54,12 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onSpeak }
         );
     }
 
-    if (isSummary) {
+    if (isSummary || isRecap) {
         return (
             <div className="d-flex mb-3 justify-content-start" data-testid="message-bubble" data-role={message.role} data-source={message.source || ''}>
                 <Card className="border-0 shadow-sm bg-light" style={{ maxWidth: '90%', borderRadius: '14px' }}>
                     <Card.Body className="p-3">
-                        <div className="text-uppercase text-muted small mb-2">Summary</div>
+                        <div className="text-uppercase text-muted small mb-2">{isRecap ? 'Recap' : 'Summary'}</div>
                         <div className="markdown-content" dangerouslySetInnerHTML={{ __html: marked.parse(message.content) }} />
                     </Card.Body>
                 </Card>
