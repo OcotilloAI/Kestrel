@@ -4,6 +4,9 @@ set -e
 # Configuration
 OLLAMA_HOST_URL="${OLLAMA_HOST:-http://ollama:11434}"
 MODEL_NAME="${GOOSE_MODEL:-qwen3-coder:30b-a3b-q4_K_M}"
+export GOOSE_PROVIDER="${GOOSE_PROVIDER:-ollama}"
+export GOOSE_MODEL="${MODEL_NAME}"
+export GOOSE_MODE="${GOOSE_MODE:-auto}"
 
 echo "Waiting for Ollama at $OLLAMA_HOST_URL..."
 

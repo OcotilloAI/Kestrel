@@ -22,7 +22,11 @@ class GooseApiClient:
             )
             response.raise_for_status()
             payload = response.json()
-            return payload["id"]
+            session_id = payload["id"]
+
+        # Load provider/model/extensions so replies can start immediately.
+        self.resume_session(session_id)
+        return session_id
 
     def resume_session(self, session_id: str) -> str:
         with httpx.Client(timeout=30.0) as client:
