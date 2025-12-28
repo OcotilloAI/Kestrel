@@ -221,8 +221,9 @@ async def orchestrator_plan(user_text: str) -> Optional[dict]:
         "Your job is to turn the user's request into an actionable plan or ask clarifying questions.\n"
         "Avoid tool execution yourself. Keep answers concise for speech.\n\n"
         "Rules:\n"
-        "- If the request is clear enough, return a task plan.\n"
-        "- If critical info is missing, ask no more than FIVE short questions.\n"
+        "- If the request is clear enough, return a task plan with sensible defaults.\n"
+        "- Only ask questions when missing info blocks a first pass.\n"
+        "- Ask no more than FIVE short questions.\n"
         "- Do not propose implementation details beyond a task list.\n\n"
         "Return JSON only, no extra text:\n"
         "- For clarification:\n"
@@ -573,7 +574,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 meta = manager.get_session_metadata(session_id) or {}
                 pending = meta.get("pending_plan")
                 if pending:
-                    if is_affirmative(data):
+                    if is_affirmative(data) and pending.get("tasks"):
                         meta["pending_plan"] = None
                         plan_tasks = pending.get("tasks", [])
                         normalized = pending.get("normalized_request", pending.get("original_request", ""))
@@ -585,6 +586,23 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                             f"Plan:\n```tasks\n{task_block}\n```\n"
                         )
                         await handle_goose_stream(goose_prompt)
+                    elif is_affirmative(data) and not pending.get("tasks"):
+                        plan_input = pending.get("original_request", "") + "\nAssume sensible defaults."
+                        decision = await orchestrator_plan(plan_input)
+                        if decision and isinstance(decision, dict) and decision.get("action") == "plan":
+                            pending["normalized_request"] = decision.get("normalized_request", pending.get("original_request", ""))
+                            pending["tasks"] = decision.get("tasks", [])
+                            task_block = "\n".join(f"- [ ] {task}" for task in pending.get("tasks", []))
+                            controller_event = make_event(
+                                event_type="assistant",
+                                role="controller",
+                                content=f"Proposed plan:\n```tasks\n{task_block}\n```\nProceed?",
+                                metadata={"controller_action": "plan"},
+                                source="controller",
+                            )
+                            manager.record_event(session_id, controller_event)
+                            await websocket.send_text(json.dumps(controller_event))
+                            meta["pending_plan"] = pending
                     else:
                         answers = pending.get("answers", [])
                         answers.append(data)
@@ -717,7 +735,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 meta = manager.get_session_metadata(session_id) or {}
                 pending = meta.get("pending_plan")
                 if pending:
-                    if is_affirmative(data):
+                    if is_affirmative(data) and pending.get("tasks"):
                         meta["pending_plan"] = None
                         plan_tasks = pending.get("tasks", [])
                         normalized = pending.get("normalized_request", pending.get("original_request", ""))
@@ -729,6 +747,23 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                             f"Plan:\n```tasks\n{task_block}\n```\n"
                         )
                         session.send_input(goose_prompt)
+                    elif is_affirmative(data) and not pending.get("tasks"):
+                        plan_input = pending.get("original_request", "") + "\nAssume sensible defaults."
+                        decision = await orchestrator_plan(plan_input)
+                        if decision and isinstance(decision, dict) and decision.get("action") == "plan":
+                            pending["normalized_request"] = decision.get("normalized_request", pending.get("original_request", ""))
+                            pending["tasks"] = decision.get("tasks", [])
+                            task_block = "\n".join(f"- [ ] {task}" for task in pending.get("tasks", []))
+                            controller_event = make_event(
+                                event_type="assistant",
+                                role="controller",
+                                content=f"Proposed plan:\n```tasks\n{task_block}\n```\nProceed?",
+                                metadata={"controller_action": "plan"},
+                                source="controller",
+                            )
+                            manager.record_event(session_id, controller_event)
+                            await websocket.send_text(json.dumps(controller_event))
+                            meta["pending_plan"] = pending
                     else:
                         answers = pending.get("answers", [])
                         answers.append(data)
