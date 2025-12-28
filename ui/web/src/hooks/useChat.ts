@@ -16,6 +16,7 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
     const messageAccumulatorRef = useRef<string>(""); // Track full message for turn summary
     const turnTimerRef = useRef<any>(null);
     const connectionIdRef = useRef<number>(0);
+    const pendingSummaryRef = useRef<boolean>(false);
 
     const recordClientEvent = useCallback(async (eventType: string, role: string, source: string, content: string) => {
         if (!sessionId) return;
@@ -94,7 +95,9 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
                 if (!content) continue;
                 let msgRole: 'user' | 'agent' | 'system' = 'agent';
                 if (type === 'user') msgRole = 'user';
-                if (type === 'system' || type === 'detail' || role === 'controller') msgRole = 'system';
+                if (type === 'system' || type === 'detail' || type === 'tool' || type === 'summary' || role === 'controller') {
+                    msgRole = 'system';
+                }
                 const source = event?.source || role || type || (msgRole === 'agent' ? 'goose' : msgRole);
 
                 const last = mapped[mapped.length - 1];
@@ -179,6 +182,19 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
                     speak(msgContent, false);
                     return;
                 }
+                if (eventType === 'tool') {
+                    addMessage('system', msgContent, parsed?.source || 'tool');
+                    return;
+                }
+                if (eventType === 'summary') {
+                    addMessage('system', msgContent, parsed?.source || 'summary');
+                    if (turnTimerRef.current) clearTimeout(turnTimerRef.current);
+                    pendingSummaryRef.current = false;
+                    messageAccumulatorRef.current = "";
+                    speak(msgContent, false);
+                    setIsProcessing(false);
+                    return;
+                }
                 if (eventType === 'assistant') {
                     if (msgContent.startsWith("[LOG]")) {
                         console.log("Backend Log:", msgContent);
@@ -186,15 +202,18 @@ export const useChat = (sessionId: string | null, onSessionInvalid?: () => void)
                     }
                     setIsProcessing(true);
                     if (turnTimerRef.current) clearTimeout(turnTimerRef.current);
+                    pendingSummaryRef.current = true;
                     messageAccumulatorRef.current += msgContent;
                     turnTimerRef.current = setTimeout(() => {
+                        if (!pendingSummaryRef.current) return;
+                        pendingSummaryRef.current = false;
                         setIsProcessing(false);
                         const finalContent = messageAccumulatorRef.current;
                         if (finalContent) {
                             speak(finalContent, true);
                         }
                         messageAccumulatorRef.current = "";
-                    }, 2000);
+                    }, 6000);
                     const role = parsed?.role === 'controller' ? 'system' : 'agent';
                     const source = parsed?.source || (role === 'system' ? 'controller' : 'goose');
                     setMessages(prev => {

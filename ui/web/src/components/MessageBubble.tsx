@@ -13,13 +13,55 @@ interface MessageBubbleProps {
 export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onSpeak }) => {
     const isUser = message.role === 'user';
     const isSystem = message.role === 'system';
+    const isTool = message.source === 'tool';
+    const isSummary = message.source === 'summary';
     
-    if (isSystem) {
+    if (isSystem && !isTool && !isSummary) {
         return (
             <div className="d-flex justify-content-center mb-3">
                 <div className="small text-muted fst-italic px-3 py-1 bg-light rounded-pill border">
                     {message.content}
                 </div>
+            </div>
+        );
+    }
+
+    if (isTool) {
+        const [headerLine, ...rest] = message.content.split('\n');
+        const toolLabel = headerLine.trim() || 'Tool';
+        const toolBody = rest.join('\n').trim();
+        return (
+            <div className="d-flex mb-3 justify-content-start" data-testid="message-bubble" data-role={message.role} data-source={message.source || ''}>
+                <Card className="border-0 shadow-sm bg-white" style={{ maxWidth: '90%', borderRadius: '14px' }}>
+                    <Card.Body className="p-3">
+                        <details>
+                            <summary className="cursor-pointer text-muted font-monospace d-flex align-items-center gap-2">
+                                <FaTerminal size={12} />
+                                {toolLabel}
+                            </summary>
+                            {toolBody && (
+                                <div
+                                    className="markdown-content mt-2"
+                                    dangerouslySetInnerHTML={{ __html: marked.parse(toolBody) }}
+                                    style={{ fontSize: '0.9rem', lineHeight: '1.5' }}
+                                />
+                            )}
+                        </details>
+                    </Card.Body>
+                </Card>
+            </div>
+        );
+    }
+
+    if (isSummary) {
+        return (
+            <div className="d-flex mb-3 justify-content-start" data-testid="message-bubble" data-role={message.role} data-source={message.source || ''}>
+                <Card className="border-0 shadow-sm bg-light" style={{ maxWidth: '90%', borderRadius: '14px' }}>
+                    <Card.Body className="p-3">
+                        <div className="text-uppercase text-muted small mb-2">Summary</div>
+                        <div className="markdown-content" dangerouslySetInnerHTML={{ __html: marked.parse(message.content) }} />
+                    </Card.Body>
+                </Card>
             </div>
         );
     }

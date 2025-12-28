@@ -80,8 +80,7 @@ async def get():
     print(f"Frontend build not found at {path}, falling back to legacy")
     return FileResponse('static/index.html.bak')
 
-@app.post("/summarize")
-async def summarize_text(request: SummarizeRequest):
+async def generate_summary(source_text: str) -> str:
     ollama_host = os.environ.get("OLLAMA_HOST", "http://ollama:11434")
     summarizer_model = os.environ.get("GOOSE_SUMMARIZER_MODEL", os.environ.get("GOOSE_MODEL", "qwen3-coder:30b-a3b-q4_K_M"))
     prompt = (
@@ -93,7 +92,7 @@ async def summarize_text(request: SummarizeRequest):
         "2) \"I learned ...\"\n"
         "3) \"Next ...\"\n"
         "Keep each sentence concise and factual. No bullet points or preamble.\n\n"
-        f"---\n{request.text}\n---"
+        f"---\n{source_text}\n---"
     )
     def normalize_summary(raw_summary: str, source_text: str) -> str:
         def has_format(text: str) -> bool:
@@ -151,16 +150,21 @@ async def summarize_text(request: SummarizeRequest):
             f"Next validate the output and iterate on any remaining gaps."
         )
 
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            f"{ollama_host}/api/generate",
+            json={"model": summarizer_model, "prompt": prompt, "stream": False}
+        )
+        response.raise_for_status()
+        data = response.json()
+        raw_summary = data.get("response", "").strip()
+        return normalize_summary(raw_summary, source_text)
+
+@app.post("/summarize")
+async def summarize_text(request: SummarizeRequest):
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{ollama_host}/api/generate",
-                json={"model": summarizer_model, "prompt": prompt, "stream": False}
-            )
-            response.raise_for_status()
-            data = response.json()
-            raw_summary = data.get("response", "").strip()
-            return {"summary": normalize_summary(raw_summary, request.text)}
+        summary = await generate_summary(request.text)
+        return {"summary": summary}
     except httpx.RequestError as e:
         raise HTTPException(status_code=500, detail=f"Failed to connect to Ollama: {e}")
     except Exception as e:
@@ -436,6 +440,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     manager.record_event(session_id, welcome_event)
     await websocket.send_text(json.dumps(welcome_event))
     async def handle_goose_stream(user_text: str):
+        assistant_chunks: list[str] = []
         async for event in session.stream_reply(user_text):
             if event.get("type") == "Error":
                 error_msg = event.get("error", "Unknown error")
@@ -453,15 +458,43 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 if part_type == "text":
                     text_chunks.append(part.get("text", ""))
                 elif part_type == "toolRequest":
-                    text_chunks.append(f"[tool request] {json.dumps(part.get('toolCall', {}), ensure_ascii=True)}")
+                    tool_call = part.get("toolCall", {})
+                    tool_name = tool_call.get("name", "unknown_tool")
+                    tool_payload = json.dumps(tool_call, ensure_ascii=True, indent=2)
+                    tool_content = f"Tool request: {tool_name}\n```json\n{tool_payload}\n```"
+                    tool_event = make_event(event_type="tool", role="system", content=tool_content, source="tool")
+                    manager.record_event(session_id, tool_event)
+                    await websocket.send_text(json.dumps(tool_event))
                 elif part_type == "toolResponse":
-                    text_chunks.append(f"[tool response] {json.dumps(part.get('toolResult', {}), ensure_ascii=True)}")
+                    tool_result = part.get("toolResult", {})
+                    tool_payload = json.dumps(tool_result, ensure_ascii=True, indent=2)
+                    tool_content = f"Tool response\n```json\n{tool_payload}\n```"
+                    tool_event = make_event(event_type="tool", role="system", content=tool_content, source="tool")
+                    manager.record_event(session_id, tool_event)
+                    await websocket.send_text(json.dumps(tool_event))
             content = "".join(text_chunks)
             if not content:
                 continue
+            assistant_chunks.append(content)
             response_event = make_event(event_type="assistant", role="coder", content=content, source="goose")
             manager.record_event(session_id, response_event)
             await websocket.send_text(json.dumps(response_event))
+        combined = "".join(assistant_chunks).strip()
+        if combined:
+            try:
+                summary = await generate_summary(combined)
+                summary_event = make_event(event_type="summary", role="system", content=summary, source="summary")
+                manager.record_event(session_id, summary_event)
+                await websocket.send_text(json.dumps(summary_event))
+            except Exception as e:
+                error_event = make_event(
+                    event_type="system",
+                    role="system",
+                    content=f"Summary failed: {e}",
+                    source="system",
+                )
+                manager.record_event(session_id, error_event)
+                await websocket.send_text(json.dumps(error_event))
 
     try:
         if isinstance(session, GooseApiSession):
