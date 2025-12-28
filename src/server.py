@@ -489,6 +489,18 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     tool_call = part.get("toolCall", {})
                     tool_value = tool_call.get("value", {})
                     tool_name = tool_call.get("name") or tool_value.get("name") or "unknown_tool"
+                    if tool_name.startswith("todo__todo_write"):
+                        todo_args = tool_value.get("arguments", {})
+                        todo_content = todo_args.get("content")
+                        if todo_content:
+                            tasks_event = make_event(
+                                event_type="assistant",
+                                role="controller",
+                                content=f"```tasks\n{todo_content}\n```",
+                                source="controller",
+                            )
+                            manager.record_event(session_id, tasks_event)
+                            await websocket.send_text(json.dumps(tasks_event))
                     tool_payload = json.dumps(tool_call, ensure_ascii=True, indent=2)
                     tool_content = f"Tool request: {tool_name}\nWorking directory: {cwd}\n```json\n{tool_payload}\n```"
                     tool_event = make_event(
@@ -577,6 +589,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     "You are Goose, the coding agent. Build and validate the user's request.\n"
                     "Start by proposing a short task list in a fenced block labeled 'tasks',\n"
                     "then ask whether to proceed if any confirmation is needed.\n"
+                    "Avoid filesystem inspection or directory listings unless the user asked\n"
+                    "or it is required to complete the task.\n"
                     "If critical information is missing, ask up to three focused questions.\n"
                     "When you finish, provide a concise completion statement.\n\n"
                     f"User request:\n{data}\n"
@@ -647,6 +661,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     "You are Goose, the coding agent. Build and validate the user's request.\n"
                     "Start by proposing a short task list in a fenced block labeled 'tasks',\n"
                     "then ask whether to proceed if any confirmation is needed.\n"
+                    "Avoid filesystem inspection or directory listings unless the user asked\n"
+                    "or it is required to complete the task.\n"
                     "If critical information is missing, ask up to three focused questions.\n"
                     "When you finish, provide a concise completion statement.\n\n"
                     f"User request:\n{data}\n"
