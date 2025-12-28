@@ -39,6 +39,15 @@ class GooseApiClient:
             payload = response.json()
             return payload["id"]
 
+    def stop_session(self, session_id: str) -> None:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(
+                f"{self.base_url}/agent/stop",
+                headers=self._headers(),
+                json={"session_id": session_id},
+            )
+            response.raise_for_status()
+
     def _build_user_message(self, text: str) -> dict:
         return {
             "role": "user",
@@ -86,3 +95,10 @@ class GooseApiSession:
 
     def is_alive(self) -> bool:
         return True
+
+    def stop(self) -> None:
+        try:
+            self.client.stop_session(self.session_id)
+        except httpx.HTTPError:
+            # Avoid crashing the session manager if the agent is already gone.
+            pass
