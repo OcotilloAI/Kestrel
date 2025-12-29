@@ -16,8 +16,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onSpeak }
     const isTool = message.source === 'tool';
     const isSummary = message.source === 'summary';
     const isRecap = message.source === 'recap';
+    const isController = message.source === 'controller';
     
-    if (isSystem && !isTool && !isSummary) {
+    if (isSystem && !isTool && !isSummary && !isRecap && !isController) {
         return (
             <div className="d-flex justify-content-center mb-3">
                 <div className="small text-muted fst-italic px-3 py-1 bg-light rounded-pill border">
