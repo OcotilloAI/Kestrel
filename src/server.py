@@ -83,9 +83,13 @@ async def get():
     print(f"Frontend build not found at {path}, falling back to legacy")
     return FileResponse('static/index.html.bak')
 
+def _summary_model() -> str:
+    return os.environ.get(
+        "LLM_SUMMARIZER_MODEL",
+        os.environ.get("GOOSE_SUMMARIZER_MODEL", os.environ.get("LLM_MODEL", "qwen3-coder:30b-a3b-q4_K_M")),
+    )
+
 async def generate_summary(source_text: str) -> str:
-    ollama_host = os.environ.get("OLLAMA_HOST", "http://ollama:11434")
-    summarizer_model = os.environ.get("GOOSE_SUMMARIZER_MODEL", os.environ.get("GOOSE_MODEL", "qwen3-coder:30b-a3b-q4_K_M"))
     prompt = (
         "Summarize the assistant's response as a short, spoken end-of-task recap.\n"
         "Include brief mentions of any code blocks, shell commands, file changes, or outputs.\n"
@@ -153,33 +157,35 @@ async def generate_summary(source_text: str) -> str:
             f"Next validate the output and iterate on any remaining gaps."
         )
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            f"{ollama_host}/api/generate",
-            json={"model": summarizer_model, "prompt": prompt, "stream": False}
+    try:
+        raw_summary = await llm_client.chat(
+            [
+                {"role": "system", "content": "You are a concise summarizer."},
+                {"role": "user", "content": prompt},
+            ],
+            model_override=_summary_model(),
         )
-        response.raise_for_status()
-        data = response.json()
-        raw_summary = data.get("response", "").strip()
-        return normalize_summary(raw_summary, source_text)
+    except Exception:
+        raw_summary = ""
+    return normalize_summary(raw_summary, source_text)
 
 async def generate_recap(source_text: str) -> str:
-    ollama_host = os.environ.get("OLLAMA_HOST", "http://ollama:11434")
-    summarizer_model = os.environ.get("GOOSE_SUMMARIZER_MODEL", os.environ.get("GOOSE_MODEL", "qwen3-coder:30b-a3b-q4_K_M"))
     prompt = (
         "Provide a longer recap for the user-visible transcript.\n"
         "Include what was done, key outputs, and what remains to do.\n"
         "Use short paragraphs. Do not invent details.\n\n"
         f"---\n{source_text}\n---"
     )
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            f"{ollama_host}/api/generate",
-            json={"model": summarizer_model, "prompt": prompt, "stream": False},
+    try:
+        return await llm_client.chat(
+            [
+                {"role": "system", "content": "You are a precise technical summarizer."},
+                {"role": "user", "content": prompt},
+            ],
+            model_override=_summary_model(),
         )
-        response.raise_for_status()
-        data = response.json()
-        return data.get("response", "").strip()
+    except Exception as e:
+        return f"Recap failed: {e}"
 
 @app.post("/summarize")
 async def summarize_text(request: SummarizeRequest):
@@ -187,7 +193,7 @@ async def summarize_text(request: SummarizeRequest):
         summary = await generate_summary(request.text)
         return {"summary": summary}
     except httpx.RequestError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to connect to Ollama: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to connect to LLM: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Summarization failed: {e}")
 

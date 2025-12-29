@@ -25,14 +25,15 @@ class LLMClient:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
-    async def chat(self, messages: List[Dict[str, str]]) -> str:
+    async def chat(self, messages: List[Dict[str, str]], model_override: Optional[str] = None) -> str:
+        model = model_override or self.model
         if self.provider == "ollama":
-            return await self._chat_ollama(messages)
-        return await self._chat_openai(messages)
+            return await self._chat_ollama(messages, model)
+        return await self._chat_openai(messages, model)
 
-    async def _chat_ollama(self, messages: List[Dict[str, str]]) -> str:
+    async def _chat_ollama(self, messages: List[Dict[str, str]], model: str) -> str:
         payload = {
-            "model": self.model,
+            "model": model,
             "messages": messages,
             "stream": False,
         }
@@ -47,9 +48,9 @@ class LLMClient:
             message = data.get("message", {})
             return str(message.get("content", "")).strip()
 
-    async def _chat_openai(self, messages: List[Dict[str, str]]) -> str:
+    async def _chat_openai(self, messages: List[Dict[str, str]], model: str) -> str:
         payload = {
-            "model": self.model,
+            "model": model,
             "messages": messages,
         }
         async with httpx.AsyncClient(timeout=120.0) as client:
