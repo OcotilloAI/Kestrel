@@ -454,22 +454,24 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
     meta = manager.get_session_metadata(session_id) or {}
     cwd = meta.get("cwd", "unknown")
-    welcome_event = make_event(
-        event_type="system",
-        role="system",
-        content="Hello, I'm Kestrel. What are we working on today?",
-        source="system"
-    )
-    manager.record_event(session_id, welcome_event)
-    await websocket.send_text(json.dumps(welcome_event))
-    cwd_event = make_event(
-        event_type="system",
-        role="system",
-        content=f"Working directory: {cwd}",
-        source="system",
-    )
-    manager.record_event(session_id, cwd_event)
-    await websocket.send_text(json.dumps(cwd_event))
+    if not meta.get("welcome_sent"):
+        welcome_event = make_event(
+            event_type="system",
+            role="system",
+            content="Hello, I'm Kestrel. What are we working on today?",
+            source="system"
+        )
+        manager.record_event(session_id, welcome_event)
+        await websocket.send_text(json.dumps(welcome_event))
+        cwd_event = make_event(
+            event_type="system",
+            role="system",
+            content=f"Working directory: {cwd}",
+            source="system",
+        )
+        manager.record_event(session_id, cwd_event)
+        await websocket.send_text(json.dumps(cwd_event))
+        meta["welcome_sent"] = True
     async def handle_goose_stream(user_text: str):
         assistant_chunks: list[str] = []
         async for event in session.stream_reply(user_text):
