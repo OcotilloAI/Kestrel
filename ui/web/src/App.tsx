@@ -16,6 +16,7 @@ function App() {
     
     // UI State
     const [showSidebar, setShowSidebar] = useState(false);
+    const [isPhone, setIsPhone] = useState(() => window.innerWidth < 640);
 
     // Data Hooks
     const { sessions, activeSessionId, setActiveSessionId, createSession, deleteBranch, deleteBranchByName, deleteProject, createBranch, mergeBranch, syncBranch, openBranchSession, branchListByProject, fetchBranches, isLoading: sessionsLoading, hasLoaded: sessionsLoaded, projects, projectsLoaded } = useSessions();
@@ -146,6 +147,19 @@ function App() {
         return () => window.removeEventListener('resize', updateAppHeight);
     }, []);
 
+    useEffect(() => {
+        const updateViewport = () => {
+            const nextIsPhone = window.innerWidth < 640;
+            setIsPhone(nextIsPhone);
+            if (!nextIsPhone) {
+                setShowSidebar(false);
+            }
+        };
+        updateViewport();
+        window.addEventListener('resize', updateViewport);
+        return () => window.removeEventListener('resize', updateViewport);
+    }, []);
+
     // Handlers
     const handleLogin = () => {
         setIsAuthenticated(true);
@@ -157,27 +171,29 @@ function App() {
     }
 
     return (
-        <div className="d-flex app-root overflow-hidden mobile-layout">
-            <div className="mobile-topbar">
-                <Button
-                    variant="light"
-                    className="mobile-menu-btn"
-                    onClick={() => setShowSidebar(prev => !prev)}
-                    aria-label="Toggle sidebar"
-                >
-                    <FaBars />
-                </Button>
-                <div className="mobile-title">Kestrel</div>
-            </div>
+        <div className={`d-flex app-root overflow-hidden${isPhone ? ' mobile-layout' : ''}`}>
+            {isPhone && (
+                <div className="mobile-topbar">
+                    <Button
+                        variant="light"
+                        className="mobile-menu-btn"
+                        onClick={() => setShowSidebar(prev => !prev)}
+                        aria-label="Toggle sidebar"
+                    >
+                        <FaBars />
+                    </Button>
+                    <div className="mobile-title">Kestrel</div>
+                </div>
+            )}
             <Sidebar 
-                isOffcanvas
-                show={showSidebar}
+                isOffcanvas={isPhone}
+                show={isPhone ? showSidebar : true}
                 onHide={() => setShowSidebar(false)}
                 sessions={sessions}
                 activeSessionId={activeSessionId}
                 projectNames={projects}
-                onSelectSession={(id) => { setActiveSessionId(id); setShowSidebar(false); }}
-                onCreateSession={(cwd) => { handleCreateSession(cwd).catch(console.error); setShowSidebar(false); }}
+                onSelectSession={(id) => { setActiveSessionId(id); if (isPhone) setShowSidebar(false); }}
+                onCreateSession={(cwd) => { handleCreateSession(cwd).catch(console.error); if (isPhone) setShowSidebar(false); }}
                 onDeleteBranch={deleteBranch}
                 onDeleteBranchByName={deleteBranchByName}
                 onDeleteProject={deleteProject}
