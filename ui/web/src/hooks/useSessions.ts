@@ -236,6 +236,17 @@ export const useSessions = () => {
             if (!res.ok) throw new Error('Failed to open branch session');
             const data = await res.json();
             if (data?.session_id) {
+                setSessions(prev => {
+                    if (prev.some(session => session.id === data.session_id)) return prev;
+                    return [
+                        ...prev,
+                        {
+                            id: data.session_id,
+                            name: `${projectName}/${branchName}`,
+                            cwd: data.cwd || ''
+                        }
+                    ];
+                });
                 setActiveSessionId(data.session_id);
             }
             await fetchSessions();
