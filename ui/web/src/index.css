@@ -81,3 +81,24 @@ html, body, #root {
     color: #6c757d;
     margin-bottom: 1rem;
 }
+
+.controller-card {
+    background: #fff6e0;
+    border: 1px solid #f1c40f;
+    box-shadow: none;
+}
+
+.controller-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+    color: #7a5d00;
+    margin-bottom: 0.5rem;
+}
+
+.controller-cta {
+    margin-top: 0.75rem;
+    font-weight: 600;
+    color: #2d2a24;
+}
