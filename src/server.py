@@ -582,6 +582,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         goose_prompt = (
                             "You are Goose, the coding agent. Execute the plan below.\n"
                             "Validate the work with tests if possible and report results.\n\n"
+                            f"Working directory: {meta.get('cwd')}\n"
+                            "All file operations must stay within the working directory.\n"
+                            "If asked to write elsewhere, ask for confirmation and propose a relative path.\n\n"
                             f"User request:\n{normalized}\n\n"
                             f"Plan:\n```tasks\n{task_block}\n```\n"
                         )
@@ -685,6 +688,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     "You are Goose, the coding agent. Build and validate the user's request.\n"
                     "If critical information is missing, ask up to three focused questions.\n"
                     "When you finish, provide a concise completion statement.\n\n"
+                    f"Working directory: {meta.get('cwd')}\n"
+                    "All file operations must stay within the working directory.\n"
+                    "If asked to write elsewhere, ask for confirmation and propose a relative path.\n\n"
                     f"User request:\n{data}\n"
                 )
                 await handle_goose_stream(goose_prompt)
@@ -743,6 +749,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         goose_prompt = (
                             "You are Goose, the coding agent. Execute the plan below.\n"
                             "Validate the work with tests if possible and report results.\n\n"
+                            f"Working directory: {meta.get('cwd')}\n"
+                            "All file operations must stay within the working directory.\n"
+                            "If asked to write elsewhere, ask for confirmation and propose a relative path.\n\n"
                             f"User request:\n{normalized}\n\n"
                             f"Plan:\n```tasks\n{task_block}\n```\n"
                         )
@@ -846,6 +855,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     "You are Goose, the coding agent. Build and validate the user's request.\n"
                     "If critical information is missing, ask up to three focused questions.\n"
                     "When you finish, provide a concise completion statement.\n\n"
+                    f"Working directory: {meta.get('cwd')}\n"
+                    "All file operations must stay within the working directory.\n"
+                    "If asked to write elsewhere, ask for confirmation and propose a relative path.\n\n"
                     f"User request:\n{data}\n"
                 )
                 session.send_input(goose_prompt)
