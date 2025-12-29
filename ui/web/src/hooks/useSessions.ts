@@ -46,12 +46,9 @@ export const useSessions = () => {
             }
             
             const newSession = await res.json();
-            // Backend returns { session_id, cwd, ... } map it to Session if needed
-            // Assuming the backend returns the session object or similar
-            // We might need to refresh the list or construct the object
             await fetchSessions();
             await fetchProjects();
-            return newSession.session_id;
+            return newSession;
         } catch (err: any) {
             setError(err.message);
             throw err;
@@ -175,9 +172,11 @@ export const useSessions = () => {
                 const err = await res.json();
                 throw new Error(err.detail || 'Failed to create branch');
             }
+            const data = await res.json();
             await fetchSessions();
             await fetchProjects();
             await fetchBranches(projectName);
+            return data?.branch as string | undefined;
         } catch (err: any) {
             setError(err.message);
             throw err;

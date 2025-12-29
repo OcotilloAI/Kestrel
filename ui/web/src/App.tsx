@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { ChatArea } from './components/ChatArea';
 import { InputArea } from './components/InputArea';
@@ -33,6 +33,45 @@ function App() {
 
     const didInitRef = useRef(false);
 
+    const getProjectNameFromCwd = (cwd?: string | null) => {
+        if (!cwd) return null;
+        const normalized = cwd.replace(/\\/g, '/');
+        const parts = normalized.split('/').filter(Boolean);
+        const workspaceIndex = parts.lastIndexOf('workspace');
+        if (workspaceIndex >= 0 && parts.length > workspaceIndex + 1) {
+            return parts[workspaceIndex + 1];
+        }
+        if (parts.length >= 2) {
+            return parts[parts.length - 2];
+        }
+        return null;
+    };
+
+    const handleCreateSession = useCallback(async (cwd?: string) => {
+        const result = await createSession(cwd);
+        if (!result?.session_id) return;
+        const isNewProject = !cwd || cwd === '.';
+        if (!isNewProject) {
+            setActiveSessionId(result.session_id);
+            return;
+        }
+        const projectName = getProjectNameFromCwd(result.cwd);
+        if (!projectName) {
+            setActiveSessionId(result.session_id);
+            return;
+        }
+        try {
+            const branchName = await createBranch(projectName);
+            if (branchName) {
+                await openBranchSession(projectName, branchName);
+                return;
+            }
+        } catch (err) {
+            console.error(err);
+        }
+        setActiveSessionId(result.session_id);
+    }, [createSession, createBranch, openBranchSession, setActiveSessionId]);
+
     // Session Persistence and Initialization Logic
     useEffect(() => {
         if (sessionsLoading || !sessionsLoaded || !projectsLoaded || !isAuthenticated) return;
@@ -59,17 +98,17 @@ function App() {
                 setActiveSessionId(sessions[0].id);
             }
         } else if (sessions.length === 0 && !activeSessionId && lastActiveCwd) {
-            createSession(lastActiveCwd).then(id => { if (id) setActiveSessionId(id); }).catch(() => {
+            handleCreateSession(lastActiveCwd).catch(() => {
                 localStorage.removeItem('kestrel_active_session_cwd');
             });
         } else if (sessions.length === 0 && !activeSessionId && projects.length > 0) {
             const projectRoot = `/workspace/${projects[0]}/main`;
-            createSession(projectRoot).then(id => { if (id) setActiveSessionId(id); }).catch(console.error);
+            handleCreateSession(projectRoot).catch(console.error);
         } else if (sessions.length === 0 && !activeSessionId && projects.length === 0) {
-            createSession('.').then(id => { if (id) setActiveSessionId(id); }).catch(console.error);
+            handleCreateSession('.').catch(console.error);
         }
         didInitRef.current = true;
-    }, [sessions, activeSessionId, setActiveSessionId, sessionsLoading, sessionsLoaded, projectsLoaded, createSession, isAuthenticated, projects]);
+    }, [sessions, activeSessionId, setActiveSessionId, sessionsLoading, sessionsLoaded, projectsLoaded, handleCreateSession, isAuthenticated, projects]);
 
     // Keep active session in sync after create/delete without forcing full re-init
     useEffect(() => {
@@ -138,7 +177,7 @@ function App() {
                 activeSessionId={activeSessionId}
                 projectNames={projects}
                 onSelectSession={(id) => { setActiveSessionId(id); setShowSidebar(false); }}
-                onCreateSession={(cwd) => { createSession(cwd).then(id => { if (id) setActiveSessionId(id); }); setShowSidebar(false); }}
+                onCreateSession={(cwd) => { handleCreateSession(cwd).catch(console.error); setShowSidebar(false); }}
                 onDeleteBranch={deleteBranch}
                 onDeleteBranchByName={deleteBranchByName}
                 onDeleteProject={deleteProject}

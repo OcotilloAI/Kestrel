@@ -14,7 +14,7 @@ interface SidebarProps {
     onDeleteBranch: (id: string) => void;
     onDeleteBranchByName: (projectName: string, branchName: string) => void;
     onDeleteProject: (projectName: string) => void;
-    onCreateBranch: (projectName: string, branchName?: string, sourceBranch?: string) => void;
+    onCreateBranch: (projectName: string, branchName?: string, sourceBranch?: string) => Promise<string | undefined>;
     onMergeBranch: (projectName: string, branchName: string) => void;
     onSyncBranch: (projectName: string, branchName: string) => void;
     onOpenBranch: (projectName: string, branchName: string) => void;
@@ -106,18 +106,32 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
         setConfirmState(null);
     };
 
-    const handleCreateBranch = () => {
+    const handleCreateBranch = async () => {
         if (!currentProjectName) return;
         const trimmed = newBranchName.trim();
-        onCreateBranch(currentProjectName, trimmed || undefined, sourceBranch);
-        setNewBranchName('');
+        try {
+            const createdBranch = await onCreateBranch(currentProjectName, trimmed || undefined, sourceBranch);
+            setNewBranchName('');
+            if (createdBranch) {
+                await onOpenBranch(currentProjectName, createdBranch);
+            }
+        } catch (err) {
+            console.error(err);
+        }
     };
 
-    const handleCreateBranchFromMain = () => {
+    const handleCreateBranchFromMain = async () => {
         if (!currentProjectName) return;
         const trimmed = newBranchName.trim();
-        onCreateBranch(currentProjectName, trimmed || undefined, 'main');
-        setNewBranchName('');
+        try {
+            const createdBranch = await onCreateBranch(currentProjectName, trimmed || undefined, 'main');
+            setNewBranchName('');
+            if (createdBranch) {
+                await onOpenBranch(currentProjectName, createdBranch);
+            }
+        } catch (err) {
+            console.error(err);
+        }
     };
 
     const content = (
