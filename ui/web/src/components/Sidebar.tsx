@@ -31,6 +31,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
     const { sessions, activeSessionId, projectNames, onSelectSession, onCreateSession, onDeleteBranch, onDeleteBranchByName, onDeleteProject, onCreateBranch, onMergeBranch, onSyncBranch, onOpenBranch, branchListByProject, fetchBranches } = props;
     const [newBranchName, setNewBranchName] = useState('');
     const [sourceBranch, setSourceBranch] = useState('main');
+    const lastActiveProjectRef = React.useRef<string | undefined>();
     const [confirmState, setConfirmState] = useState<{
         type: 'branch' | 'project' | 'merge' | 'sync';
         projectName: string;
@@ -45,9 +46,21 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
 
     useEffect(() => {
         const activeProjectValid = activeProjectName && projectNames.includes(activeProjectName);
-        if (activeProjectValid && activeProjectName !== currentProjectName) {
-            setCurrentProjectName(activeProjectName);
-            return;
+        if (activeProjectValid) {
+            if (!lastActiveProjectRef.current) {
+                lastActiveProjectRef.current = activeProjectName;
+            }
+            if (activeProjectName !== lastActiveProjectRef.current) {
+                const shouldSync =
+                    !currentProjectName ||
+                    currentProjectName === lastActiveProjectRef.current ||
+                    !projectNames.includes(currentProjectName);
+                if (shouldSync) {
+                    setCurrentProjectName(activeProjectName);
+                }
+                lastActiveProjectRef.current = activeProjectName;
+                return;
+            }
         }
         if (!activeProjectValid && (!currentProjectName || !projectNames.includes(currentProjectName))) {
             setCurrentProjectName(projectNames[0] || '');
