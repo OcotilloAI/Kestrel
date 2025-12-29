@@ -33,6 +33,7 @@ function App() {
     const isMainBranch = activeBranchName === 'main';
 
     const didInitRef = useRef(false);
+    const lastIsPhoneRef = useRef<boolean | null>(null);
 
     const getProjectNameFromCwd = (cwd?: string | null) => {
         if (!cwd) return null;
@@ -151,9 +152,10 @@ function App() {
         const updateViewport = () => {
             const nextIsPhone = window.innerWidth < 640;
             setIsPhone(nextIsPhone);
-            if (!nextIsPhone) {
-                setShowSidebar(false);
+            if (lastIsPhoneRef.current === null || lastIsPhoneRef.current !== nextIsPhone) {
+                setShowSidebar(!nextIsPhone);
             }
+            lastIsPhoneRef.current = nextIsPhone;
         };
         updateViewport();
         window.addEventListener('resize', updateViewport);
@@ -185,7 +187,8 @@ function App() {
                     <div className="mobile-title">Kestrel</div>
                 </div>
             )}
-            <Sidebar 
+            {(!isPhone && showSidebar) || isPhone ? (
+                <Sidebar 
                 isOffcanvas={isPhone}
                 show={isPhone ? showSidebar : true}
                 onHide={() => setShowSidebar(false)}
@@ -204,8 +207,21 @@ function App() {
                 branchListByProject={branchListByProject}
                 fetchBranches={fetchBranches}
             />
+            ) : null}
 
             <div className="d-flex flex-column flex-grow-1 content-pane" style={{minWidth: 0}}>
+                {!isPhone && !showSidebar && (
+                    <div className="desktop-topbar">
+                        <Button
+                            variant="light"
+                            className="desktop-menu-btn"
+                            onClick={() => setShowSidebar(true)}
+                            aria-label="Show sidebar"
+                        >
+                            <FaBars />
+                        </Button>
+                    </div>
+                )}
                 <ChatArea 
                     messages={messages} 
                     status={status} 
@@ -218,7 +234,12 @@ function App() {
                 />
                 <InputArea 
                     onSend={(text) => sendMessage(text)} 
-                    onInteraction={stopSpeaking}
+                    onInteraction={() => {
+                        stopSpeaking();
+                        if (!isPhone && showSidebar) {
+                            setShowSidebar(false);
+                        }
+                    }}
                     disabled={status !== 'connected' || isMainBranch} 
                     isProcessing={isProcessing} 
                 />
