@@ -3,10 +3,9 @@ set -e
 
 # Configuration
 OLLAMA_HOST_URL="${OLLAMA_HOST:-http://ollama:11434}"
-MODEL_NAME="${GOOSE_MODEL:-qwen3-coder:30b-a3b-q4_K_M}"
-export GOOSE_PROVIDER="${GOOSE_PROVIDER:-ollama}"
-export GOOSE_MODEL="${MODEL_NAME}"
-export GOOSE_MODE="${GOOSE_MODE:-auto}"
+MODEL_NAME="${LLM_MODEL:-${GOOSE_MODEL:-qwen3-coder:30b-a3b-q4_K_M}}"
+export LLM_PROVIDER="${LLM_PROVIDER:-ollama}"
+export LLM_MODEL="${MODEL_NAME}"
 
 echo "Waiting for Ollama at $OLLAMA_HOST_URL..."
 
@@ -34,44 +33,6 @@ else
         sleep 10
     done
     echo "Model $MODEL_NAME pulled successfully."
-fi
-
-# Configure Goose
-mkdir -p $HOME/.config/goose
-CONFIG_FILE="$HOME/.config/goose/config.yaml"
-
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "Generating Goose config..."
-    cat <<EOF > "$CONFIG_FILE"
-GOOSE_PROVIDER: ollama
-GOOSE_MODEL: $MODEL_NAME
-GOOSE_MODE: auto
-extensions:
-  developer:
-    enabled: true
-    name: developer
-    type: builtin
-  extensionmanager:
-    enabled: true
-    name: extensionmanager
-    type: builtin
-EOF
-fi
-
-if [ "${GOOSE_TRANSPORT}" = "goosed" ]; then
-    export GOOSE_HOST="${GOOSE_HOST:-0.0.0.0}"
-    export GOOSE_PORT="${GOOSE_PORT:-3001}"
-    export GOOSE_SERVER__SECRET_KEY="${GOOSE_SERVER__SECRET_KEY:-${GOOSE_SERVER_SECRET:-kestrel}}"
-    echo "Starting Goose server on ${GOOSE_HOST}:${GOOSE_PORT}..."
-    /usr/local/bin/goosed agent &
-    echo "Waiting for Goose server..."
-    for i in {1..30}; do
-        if curl -s -H "X-Secret-Key: ${GOOSE_SERVER__SECRET_KEY}" "http://127.0.0.1:${GOOSE_PORT}/sessions" > /dev/null; then
-            echo "Goose server is ready."
-            break
-        fi
-        sleep 1
-    done
 fi
 
 echo "Starting Kestrel Server..."

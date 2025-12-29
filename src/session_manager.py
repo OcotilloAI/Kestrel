@@ -8,19 +8,15 @@ import base64
 from pathlib import Path
 from typing import Dict, Optional, List, Any
 
-from goose_wrapper import GooseWrapper
-from goose_api_client import GooseApiClient, GooseApiSession
+from agent_session import AgentSession
 from naming import generate_name
 
 class SessionManager:
     def __init__(self, workdir_root: str = None):
-        self._sessions: Dict[str, GooseWrapper] = {}
+        self._sessions: Dict[str, AgentSession] = {}
         self._session_metadata: Dict[str, Dict[str, Any]] = {}
         self._transcripts: Dict[str, List[Dict[str, Any]]] = {}
         self._transcript_paths: Dict[str, Path] = {}
-        self.transport = os.environ.get("GOOSE_TRANSPORT", "cli")
-        self.goose_api_url = os.environ.get("GOOSE_SERVER_URL", "http://127.0.0.1:3001")
-        self.goose_api_secret = os.environ.get("GOOSE_SERVER_SECRET", "test")
         self.logger = logging.getLogger("SessionManager")
         
         # Determine root storage for sessions
@@ -34,7 +30,7 @@ class SessionManager:
 
     def create_session(self, cwd: str = None, copy_from_path: str = None) -> str:
         """
-        Create a new Goose session using Git-based hierarchy.
+        Create a new agent session using Git-based hierarchy.
         
         - New Session: Creates 'workspace/{project_name}/main' and initializes a git repo.
         - Clone Session: Clones the source git repo into 'workspace/{project_name}/{branch_name}'.
@@ -105,15 +101,6 @@ class SessionManager:
                 subprocess.run(["git", "config", "user.email", "kestrel@ocotillo.ai"], cwd=final_cwd, check=True)
                 subprocess.run(["git", "config", "user.name", "Kestrel Agent"], cwd=final_cwd, check=True)
                 
-                # Copy hints
-                root_hints = self.workdir_root / ".goosehints"
-                if root_hints.exists():
-                    shutil.copy2(root_hints, final_cwd / ".goosehints")
-
-                root_env = self.workdir_root / ".gooseenv"
-                if root_env.exists():
-                    shutil.copy2(root_env, final_cwd / ".gooseenv")
-                    
                 # Initial Commit
                 subprocess.run(["git", "add", "."], cwd=final_cwd, check=True)
                 subprocess.run(["git", "commit", "-m", "Initial commit by Kestrel"], cwd=final_cwd, check=True)
@@ -125,38 +112,22 @@ class SessionManager:
         if not final_cwd.exists():
             final_cwd.mkdir(parents=True, exist_ok=True)
 
-        self._ensure_goosehints(final_cwd)
-        self._ensure_gooseenv(final_cwd)
-
-        try:
-            if self.transport == "goosed":
-                client = GooseApiClient(self.goose_api_url, self.goose_api_secret)
-                goose_session_id = client.start_session(str(final_cwd))
-                wrapper = GooseApiSession(client, goose_session_id, str(final_cwd))
-                self._sessions[session_id] = wrapper
-            else:
-                wrapper = GooseWrapper()
-                wrapper.start(cwd=str(final_cwd))
-                self._sessions[session_id] = wrapper
-            project_root = self._resolve_project_root(final_cwd)
-            branch_name = None
-            if project_root and self._is_relative_to(final_cwd, project_root):
-                branch_name = final_cwd.name
-            self._session_metadata[session_id] = {
-                "id": session_id,
-                "name": session_name,
-                "cwd": str(final_cwd),
-                "project_root": str(project_root) if project_root else None,
-                "branch_name": branch_name,
-                "goose_session_id": getattr(wrapper, "session_id", None),
-            }
-            self._transcripts[session_id] = []
-            self._transcript_paths[session_id] = self._build_transcript_path(branch_name, project_root, session_id)
-            self.logger.info(f"Created session '{session_name}' ({session_id}) in {final_cwd}")
-            return session_id
-        except Exception as e:
-            self.logger.error(f"Failed to start session: {e}")
-            raise
+        project_root = self._resolve_project_root(final_cwd)
+        branch_name = None
+        if project_root and self._is_relative_to(final_cwd, project_root):
+            branch_name = final_cwd.name
+        self._sessions[session_id] = AgentSession(cwd=str(final_cwd))
+        self._session_metadata[session_id] = {
+            "id": session_id,
+            "name": session_name,
+            "cwd": str(final_cwd),
+            "project_root": str(project_root) if project_root else None,
+            "branch_name": branch_name,
+        }
+        self._transcripts[session_id] = []
+        self._transcript_paths[session_id] = self._build_transcript_path(branch_name, project_root, session_id)
+        self.logger.info(f"Created session '{session_name}' ({session_id}) in {final_cwd}")
+        return session_id
 
     def _copy_contents(self, src: Path, dst: Path):
         for item in src.iterdir():
@@ -168,19 +139,7 @@ class SessionManager:
             else:
                 shutil.copy2(item, dest_path)
 
-    def _ensure_goosehints(self, target_dir: Path):
-        hints_src = self.workdir_root / ".goosehints"
-        hints_dst = target_dir / ".goosehints"
-        if hints_src.exists() and not hints_dst.exists():
-            shutil.copy2(hints_src, hints_dst)
-
-    def _ensure_gooseenv(self, target_dir: Path):
-        env_src = self.workdir_root / ".gooseenv"
-        env_dst = target_dir / ".gooseenv"
-        if env_src.exists() and not env_dst.exists():
-            shutil.copy2(env_src, env_dst)
-
-    def get_session(self, session_id: str) -> Optional[GooseWrapper]:
+    def get_session(self, session_id: str) -> Optional[AgentSession]:
         """Retrieve an active session by ID."""
         return self._sessions.get(session_id)
         
@@ -238,8 +197,6 @@ class SessionManager:
             self.logger.error(f"Branch clone failed: {e}")
             raise
 
-        self._ensure_goosehints(branch_dir)
-        self._ensure_gooseenv(branch_dir)
         return branch_name
 
     def delete_branch(self, project_name: str, branch_name: str) -> bool:
@@ -324,19 +281,17 @@ class SessionManager:
         """List all active sessions."""
         return [
             {
-                "id": sid, 
-                "alive": wrapper.is_alive(),
+                "id": sid,
+                "alive": True,
                 "name": self._session_metadata.get(sid, {}).get("name", "Unknown"),
-                "cwd": self._session_metadata.get(sid, {}).get("cwd")
-            } 
-            for sid, wrapper in self._sessions.items()
+                "cwd": self._session_metadata.get(sid, {}).get("cwd"),
+            }
+            for sid in self._sessions.keys()
         ]
 
     def kill_session(self, session_id: str) -> bool:
         """Terminate a specific session."""
-        wrapper = self._sessions.get(session_id)
-        if wrapper:
-            wrapper.stop()
+        if session_id in self._sessions:
             del self._sessions[session_id]
             if session_id in self._session_metadata:
                  del self._session_metadata[session_id]

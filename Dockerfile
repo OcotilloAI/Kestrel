@@ -6,21 +6,6 @@ RUN npm install
 COPY ui/web/ ./
 RUN npm run build
 
-# Stage 2: Build Goose Server
-FROM rust:1.78-slim AS goose-server-builder
-WORKDIR /build/goose
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    pkg-config \
-    libssl-dev \
-    libxcb1-dev \
-    libx11-dev \
-    clang \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-COPY goose/ /build/goose/
-RUN cargo build --release --package goose-server
-
 # Stage 2: Final Image
 FROM python:3.11-slim
 
@@ -44,15 +29,6 @@ WORKDIR /app
 # Copy requirements and install python deps
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Install Goose
-COPY goose/download_cli.sh /tmp/install_goose.sh
-ENV GOOSE_BIN_DIR=/usr/local/bin
-ENV CONFIGURE=false
-RUN chmod +x /tmp/install_goose.sh && /tmp/install_goose.sh
-
-# Copy goose server binary
-COPY --from=goose-server-builder /build/goose/target/release/goosed /usr/local/bin/goosed
 
 # Copy built frontend from Stage 1
 COPY --from=frontend-builder /app/ui/web/dist /app/ui/web/dist

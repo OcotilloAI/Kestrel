@@ -1,18 +1,17 @@
 import os
-import time
 import sys
-import numpy as np
 from stt import FasterWhisperSTT
 from tts import PiperTTS
 from audio import AudioRecorder
-from goose_wrapper import GooseWrapper
+from agent_session import AgentSession
+from agent_runner import AgentRunner
+import asyncio
+from llm_client import LLMClient
 
 # Configuration
 # Path is relative to CWD
 PIPER_BIN = "./piper-bin/piper/piper"
 PIPER_MODEL = "piper-data/en_US-lessac-medium.onnx"
-GOOSE_BIN = "./goose-bin"
-
 def main():
     print("Initializing Kestrel...", file=sys.stderr)
     
@@ -21,25 +20,15 @@ def main():
         stt = FasterWhisperSTT()
         tts = PiperTTS(PIPER_BIN, PIPER_MODEL)
         recorder = AudioRecorder()
-        goose = GooseWrapper(GOOSE_BIN)
+        agent_session = AgentSession(cwd=os.getcwd())
+        agent_runner = AgentRunner(LLMClient())
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
     except Exception as e:
         print(f"Initialization Error: {e}", file=sys.stderr)
         return
     
-    print("Starting Goose Agent...", file=sys.stderr)
-    try:
-        goose.start()
-    except Exception as e:
-        print(f"Failed to start Goose: {e}", file=sys.stderr)
-        return
-
-    tts.speak("Goose is ready. Listening.")
-    
-    # Wait a bit for Goose to initialize (it might print a welcome message)
-    time.sleep(2)
-    # Drain initial output
-    for line in goose.get_output():
-        print(f"Goose Init: {line.strip()}", file=sys.stderr)
+    tts.speak("Kestrel is ready. Listening.")
 
     try:
         while True:
@@ -59,58 +48,24 @@ def main():
                 tts.speak("Goodbye!")
                 break
 
-            # 3. Send to Goose
-            goose.send_input(user_text)
-            
-            # 4. Read Goose Response & Speak
-            accumulated_sentence = ""
-            start_wait = time.time()
-            got_response = False
-            
-            # Max wait time for ANY response
-            max_wait_total = 30.0 
-            start_total_wait = time.time()
+            async def run_agent(text: str) -> str:
+                response_chunks = []
+                async for event in agent_runner.run(agent_session, text):
+                    if event.get("type") == "assistant":
+                        response_chunks.append(event.get("content", ""))
+                return "".join(response_chunks).strip()
 
-            while True:
-                lines = list(goose.get_output())
-                
-                if lines:
-                    got_response = True
-                    start_wait = time.time() # Reset silence timeout
-                    
-                    for line in lines:
-                        print(f"Goose: {line.strip()}", file=sys.stderr)
-                        
-                        # Filter prompt
-                        if ">" in line and len(line) < 20: 
-                            continue 
-                        # Filter "Goose is thinking" or similar if needed
-                        
-                        accumulated_sentence += " " + line.strip()
-                        
-                        if line.strip().endswith(('.', '!', '?', ':')):
-                             tts.speak(accumulated_sentence)
-                             accumulated_sentence = ""
-
-                # Conditions to stop waiting:
-                # 1. We got response AND silence for X seconds
-                if got_response and (time.time() - start_wait > 1.5):
-                    # Flush remaining
-                    if accumulated_sentence.strip():
-                        tts.speak(accumulated_sentence)
-                    break
-                
-                # 2. Timeout waiting for ANY response
-                if not got_response and (time.time() - start_total_wait > max_wait_total):
-                    print("Goose timed out.", file=sys.stderr)
-                    break
-
-                time.sleep(0.1)
+            try:
+                reply = loop.run_until_complete(run_agent(user_text))
+                if reply:
+                    tts.speak(reply)
+            except Exception as e:
+                print(f"Agent error: {e}", file=sys.stderr)
 
     except KeyboardInterrupt:
         print("\nStopping...", file=sys.stderr)
     finally:
-        goose.stop()
+        loop.close()
 
 if __name__ == "__main__":
     main()

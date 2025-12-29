@@ -7,7 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 from pydantic import BaseModel
 from session_manager import SessionManager
-from goose_api_client import GooseApiSession
+from agent_runner import AgentRunner
+from llm_client import LLMClient
 import os
 import httpx
 import json
@@ -53,6 +54,8 @@ class BranchConfig(BaseModel):
 
 # Global Session Manager
 manager = SessionManager()
+llm_client = LLMClient()
+agent_runner = AgentRunner(llm_client)
 CONTROLLER_ENABLED = os.environ.get("GOOSE_CONTROLLER_ENABLED", "0") == "1"
 CONTROLLER_MODEL = os.environ.get("GOOSE_CONTROLLER_MODEL", os.environ.get("GOOSE_MODEL", "qwen3-coder:30b-a3b-q4_K_M"))
 
@@ -62,7 +65,7 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    print("Shutting down all Goose sessions...")
+    print("Shutting down all agent sessions...")
     manager.shutdown_all()
 
 # Serve Frontend
@@ -472,73 +475,25 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         manager.record_event(session_id, cwd_event)
         await websocket.send_text(json.dumps(cwd_event))
         meta["welcome_sent"] = True
-    async def handle_goose_stream(user_text: str):
+    async def handle_agent_run(user_text: str):
         assistant_chunks: list[str] = []
-        async for event in session.stream_reply(user_text):
-            if event.get("type") == "Error":
-                error_msg = event.get("error", "Unknown error")
-                error_event = make_event(event_type="system", role="system", content=error_msg, source="system")
-                manager.record_event(session_id, error_event)
-                await websocket.send_text(json.dumps(error_event))
-                continue
-            if event.get("type") != "Message":
-                continue
-            message = event.get("message", {})
-            contents = message.get("content", [])
-            text_chunks = []
-            for part in contents:
-                part_type = part.get("type")
-                if part_type == "text":
-                    text_chunks.append(part.get("text", ""))
-                elif part_type == "toolRequest":
-                    tool_call = part.get("toolCall", {})
-                    tool_value = tool_call.get("value", {})
-                    tool_name = tool_call.get("name") or tool_value.get("name") or "unknown_tool"
-                    if tool_name.startswith("todo__todo_write"):
-                        todo_args = tool_value.get("arguments", {})
-                        todo_content = todo_args.get("content")
-                        if todo_content:
-                            tasks_event = make_event(
-                                event_type="assistant",
-                                role="controller",
-                                content=f"```tasks\n{todo_content}\n```",
-                                source="controller",
-                            )
-                            manager.record_event(session_id, tasks_event)
-                            await websocket.send_text(json.dumps(tasks_event))
-                    tool_payload = json.dumps(tool_call, ensure_ascii=True, indent=2)
-                    tool_content = f"Tool request: {tool_name}\nWorking directory: {cwd}\n```json\n{tool_payload}\n```"
-                    tool_event = make_event(
-                        event_type="tool",
-                        role="system",
-                        content=tool_content,
-                        metadata={"tool_name": tool_name, "cwd": cwd},
-                        source="tool",
-                    )
-                    manager.record_event(session_id, tool_event)
-                    await websocket.send_text(json.dumps(tool_event))
-                elif part_type == "toolResponse":
-                    tool_result = part.get("toolResult", {})
-                    tool_value = tool_result.get("value", {})
-                    tool_name = tool_result.get("name") or tool_value.get("name") or "unknown_tool"
-                    tool_payload = json.dumps(tool_result, ensure_ascii=True, indent=2)
-                    tool_content = f"Tool response: {tool_name}\nWorking directory: {cwd}\n```json\n{tool_payload}\n```"
-                    tool_event = make_event(
-                        event_type="tool",
-                        role="system",
-                        content=tool_content,
-                        metadata={"tool_name": tool_name, "cwd": cwd},
-                        source="tool",
-                    )
-                    manager.record_event(session_id, tool_event)
-                    await websocket.send_text(json.dumps(tool_event))
-            content = "".join(text_chunks)
-            if not content:
-                continue
-            assistant_chunks.append(content)
-            response_event = make_event(event_type="assistant", role="coder", content=content, source="goose")
-            manager.record_event(session_id, response_event)
-            await websocket.send_text(json.dumps(response_event))
+        async for event in agent_runner.run(session, user_text):
+            event_type = event.get("type", "assistant")
+            role = event.get("role", "assistant")
+            content = event.get("content", "")
+            source = event.get("source", role)
+            metadata = event.get("metadata", {})
+            outgoing = make_event(
+                event_type=event_type,
+                role=role,
+                content=content,
+                metadata=metadata,
+                source=source,
+            )
+            manager.record_event(session_id, outgoing)
+            await websocket.send_text(json.dumps(outgoing))
+            if event_type == "assistant" and content:
+                assistant_chunks.append(content)
         combined = "".join(assistant_chunks).strip()
         if combined:
             try:
@@ -561,313 +516,136 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 await websocket.send_text(json.dumps(error_event))
 
     try:
-        if isinstance(session, GooseApiSession):
-            while True:
-                data = await websocket.receive_text()
-                print(f"[{session_id}] Received: {data}")
-                event = make_event(event_type="user", role="user", content=data, source="user")
-                manager.record_event(session_id, event)
+        while True:
+            data = await websocket.receive_text()
+            print(f"[{session_id}] Received: {data}")
+            event = make_event(event_type="user", role="user", content=data, source="user")
+            manager.record_event(session_id, event)
 
-                detail_path = is_detail_request(data)
-                if detail_path:
-                    await send_detail_response(detail_path)
-                    continue
+            detail_path = is_detail_request(data)
+            if detail_path:
+                await send_detail_response(detail_path)
+                continue
 
-                meta = manager.get_session_metadata(session_id) or {}
-                pending = meta.get("pending_plan")
-                if pending:
-                    if is_affirmative(data) and pending.get("tasks"):
-                        meta["pending_plan"] = None
-                        plan_tasks = pending.get("tasks", [])
-                        normalized = pending.get("normalized_request", pending.get("original_request", ""))
-                        task_block = "\n".join(f"- [ ] {task}" for task in plan_tasks)
-                        goose_prompt = (
-                            "You are Goose, the coding agent. Execute the plan below.\n"
-                            "Validate the work with tests if possible and report results.\n\n"
-                            f"Working directory: {meta.get('cwd')}\n"
-                            "All file operations must stay within the working directory.\n"
-                            "If asked to write elsewhere, ask for confirmation and propose a relative path.\n\n"
-                            f"User request:\n{normalized}\n\n"
-                            f"Plan:\n```tasks\n{task_block}\n```\n"
+            meta = manager.get_session_metadata(session_id) or {}
+            pending = meta.get("pending_plan")
+            if pending:
+                if is_affirmative(data) and pending.get("tasks"):
+                    meta["pending_plan"] = None
+                    plan_tasks = pending.get("tasks", [])
+                    normalized = pending.get("normalized_request", pending.get("original_request", ""))
+                    task_block = "\n".join(f"- [ ] {task}" for task in plan_tasks)
+                    agent_prompt = (
+                        "Execute the plan below. Validate the work with tests if possible.\n\n"
+                        f"Working directory: {meta.get('cwd')}\n"
+                        f"User request:\n{normalized}\n\n"
+                        f"Plan:\n```tasks\n{task_block}\n```\n"
+                    )
+                    await handle_agent_run(agent_prompt)
+                elif is_affirmative(data) and not pending.get("tasks"):
+                    plan_input = pending.get("original_request", "") + "\nAssume sensible defaults."
+                    decision = await orchestrator_plan(plan_input)
+                    if decision and isinstance(decision, dict) and decision.get("action") == "plan":
+                        pending["normalized_request"] = decision.get("normalized_request", pending.get("original_request", ""))
+                        pending["tasks"] = decision.get("tasks", [])
+                        task_block = "\n".join(f"- [ ] {task}" for task in pending.get("tasks", []))
+                        controller_event = make_event(
+                            event_type="assistant",
+                            role="controller",
+                            content=f"Proposed plan:\n```tasks\n{task_block}\n```\nProceed?",
+                            metadata={"controller_action": "plan"},
+                            source="controller",
                         )
-                        await handle_goose_stream(goose_prompt)
-                    elif is_affirmative(data) and not pending.get("tasks"):
-                        plan_input = pending.get("original_request", "") + "\nAssume sensible defaults."
-                        decision = await orchestrator_plan(plan_input)
-                        if decision and isinstance(decision, dict) and decision.get("action") == "plan":
+                        manager.record_event(session_id, controller_event)
+                        await websocket.send_text(json.dumps(controller_event))
+                        meta["pending_plan"] = pending
+                else:
+                    answers = pending.get("answers", [])
+                    answers.append(data)
+                    pending["answers"] = answers
+                    plan_input = pending.get("original_request", "") + "\nUser clarifications:\n" + "\n".join(answers)
+                    decision = await orchestrator_plan(plan_input)
+                    if decision and isinstance(decision, dict):
+                        action = decision.get("action")
+                        if action == "clarify" and decision.get("questions"):
+                            questions = "\n".join(f"- {q}" for q in decision.get("questions", []))
+                            controller_event = make_event(
+                                event_type="assistant",
+                                role="controller",
+                                content=f"I need a few details plan-ready:\n{questions}",
+                                metadata={"controller_action": "clarify"},
+                                source="controller",
+                            )
+                            manager.record_event(session_id, controller_event)
+                            await websocket.send_text(json.dumps(controller_event))
+                            pending["questions"] = decision.get("questions", [])
+                            meta["pending_plan"] = pending
+                            continue
+                        if action == "plan" and decision.get("tasks"):
                             pending["normalized_request"] = decision.get("normalized_request", pending.get("original_request", ""))
                             pending["tasks"] = decision.get("tasks", [])
                             task_block = "\n".join(f"- [ ] {task}" for task in pending.get("tasks", []))
                             controller_event = make_event(
                                 event_type="assistant",
                                 role="controller",
-                                content=f"Proposed plan:\n```tasks\n{task_block}\n```\nProceed?",
+                                content=f"Proposed plan:\n\n```tasks\n{task_block}\n```\n\nProceed?",
                                 metadata={"controller_action": "plan"},
                                 source="controller",
                             )
                             manager.record_event(session_id, controller_event)
                             await websocket.send_text(json.dumps(controller_event))
                             meta["pending_plan"] = pending
-                    else:
-                        answers = pending.get("answers", [])
-                        answers.append(data)
-                        pending["answers"] = answers
-                        plan_input = pending.get("original_request", "") + "\nUser clarifications:\n" + "\n".join(answers)
-                        decision = await orchestrator_plan(plan_input)
-                        if decision and isinstance(decision, dict):
-                            action = decision.get("action")
-                            if action == "clarify" and decision.get("questions"):
-                                questions = "\n".join(f"- {q}" for q in decision.get("questions", []))
-                                controller_event = make_event(
-                                    event_type="assistant",
-                                    role="controller",
-                                    content=f"I need a few details plan-ready:\n{questions}",
-                                    metadata={"controller_action": "clarify"},
-                                    source="controller",
-                                )
-                                manager.record_event(session_id, controller_event)
-                                await websocket.send_text(json.dumps(controller_event))
-                                pending["questions"] = decision.get("questions", [])
-                                meta["pending_plan"] = pending
-                                continue
-                            if action == "plan" and decision.get("tasks"):
-                                pending["normalized_request"] = decision.get("normalized_request", pending.get("original_request", ""))
-                                pending["tasks"] = decision.get("tasks", [])
-                                task_block = "\n".join(f"- [ ] {task}" for task in pending.get("tasks", []))
-                                controller_event = make_event(
-                                    event_type="assistant",
-                                    role="controller",
-                                    content=f"Proposed plan:\n\n```tasks\n{task_block}\n```\n\nProceed?",
-                                    metadata={"controller_action": "plan"},
-                                    source="controller",
-                                )
-                                manager.record_event(session_id, controller_event)
-                                await websocket.send_text(json.dumps(controller_event))
-                                meta["pending_plan"] = pending
-                                continue
+                            continue
+                continue
+
+            decision = await orchestrator_plan(data)
+            if decision and isinstance(decision, dict):
+                action = decision.get("action")
+                if action == "clarify" and decision.get("questions"):
+                    questions = "\n".join(f"- {q}" for q in decision.get("questions", []))
+                    controller_event = make_event(
+                        event_type="assistant",
+                        role="controller",
+                        content=f"I need a few details plan-ready:\n{questions}",
+                        metadata={"controller_action": "clarify"},
+                        source="controller",
+                    )
+                    manager.record_event(session_id, controller_event)
+                    await websocket.send_text(json.dumps(controller_event))
+                    meta["pending_plan"] = {
+                        "original_request": data,
+                        "questions": decision.get("questions", []),
+                        "answers": [],
+                    }
+                    continue
+                if action == "plan" and decision.get("tasks"):
+                    task_block = "\n".join(f"- [ ] {task}" for task in decision.get("tasks", []))
+                    controller_event = make_event(
+                        event_type="assistant",
+                        role="controller",
+                        content=f"Proposed plan:\n\n```tasks\n{task_block}\n```\n\nProceed?",
+                        metadata={"controller_action": "plan"},
+                        source="controller",
+                    )
+                    manager.record_event(session_id, controller_event)
+                    await websocket.send_text(json.dumps(controller_event))
+                    meta["pending_plan"] = {
+                        "original_request": data,
+                        "normalized_request": decision.get("normalized_request", data),
+                        "tasks": decision.get("tasks", []),
+                        "answers": [],
+                    }
                     continue
 
-                decision = await orchestrator_plan(data)
-                if decision and isinstance(decision, dict):
-                    action = decision.get("action")
-                    if action == "clarify" and decision.get("questions"):
-                        questions = "\n".join(f"- {q}" for q in decision.get("questions", []))
-                        controller_event = make_event(
-                            event_type="assistant",
-                            role="controller",
-                            content=f"I need a few details plan-ready:\n{questions}",
-                            metadata={"controller_action": "clarify"},
-                            source="controller",
-                        )
-                        manager.record_event(session_id, controller_event)
-                        await websocket.send_text(json.dumps(controller_event))
-                        meta["pending_plan"] = {
-                            "original_request": data,
-                            "questions": decision.get("questions", []),
-                            "answers": [],
-                        }
-                        continue
-                    if action == "plan" and decision.get("tasks"):
-                        task_block = "\n".join(f"- [ ] {task}" for task in decision.get("tasks", []))
-                        controller_event = make_event(
-                            event_type="assistant",
-                            role="controller",
-                            content=f"Proposed plan:\n\n```tasks\n{task_block}\n```\n\nProceed?",
-                            metadata={"controller_action": "plan"},
-                            source="controller",
-                        )
-                        manager.record_event(session_id, controller_event)
-                        await websocket.send_text(json.dumps(controller_event))
-                        meta["pending_plan"] = {
-                            "original_request": data,
-                            "normalized_request": decision.get("normalized_request", data),
-                            "tasks": decision.get("tasks", []),
-                            "answers": [],
-                        }
-                        continue
-
-                goose_prompt = (
-                    "You are Goose, the coding agent. Build and validate the user's request.\n"
-                    "If critical information is missing, ask up to three focused questions.\n"
-                    "When you finish, provide a concise completion statement.\n\n"
-                    f"Working directory: {meta.get('cwd')}\n"
-                    "All file operations must stay within the working directory.\n"
-                    "If asked to write elsewhere, ask for confirmation and propose a relative path.\n\n"
-                    f"User request:\n{data}\n"
-                )
-                await handle_goose_stream(goose_prompt)
-        else:
-            async def sender():
-                while True:
-                    chunks = list(session.get_output())
-                    for chunk in chunks:
-                        if chunk:
-                            if "starting session | provider:" in chunk or \
-                               "goose is running!" in chunk or \
-                               "Context: ○" in chunk or \
-                               "working directory:" in chunk or \
-                               "session id:" in chunk:
-                                continue
-                            event_type = "assistant"
-                            role = "coder"
-                            content = chunk
-                            if chunk.startswith("[LOG]"):
-                                event_type = "system"
-                                role = "system"
-                            source = "system" if event_type == "system" else "goose"
-                            event = make_event(event_type=event_type, role=role, content=content, source=source)
-                            manager.record_event(session_id, event)
-                            await websocket.send_text(json.dumps(event))
-                    if not session.is_alive():
-                        code = session.return_code()
-                        error_msg = f"ERROR: Backend process exited unexpectedly with code {code}"
-                        print(error_msg)
-                        event = make_event(event_type="system", role="system", content=error_msg, source="system")
-                        manager.record_event(session_id, event)
-                        await websocket.send_text(json.dumps(event))
-                        await websocket.close()
-                        break
-                    await asyncio.sleep(0.1)
-            sender_task = asyncio.create_task(sender())
-            while True:
-                data = await websocket.receive_text()
-                print(f"[{session_id}] Received: {data}")
-                event = make_event(event_type="user", role="user", content=data, source="user")
-                manager.record_event(session_id, event)
-
-                detail_path = is_detail_request(data)
-                if detail_path:
-                    await send_detail_response(detail_path)
-                    continue
-
-                meta = manager.get_session_metadata(session_id) or {}
-                pending = meta.get("pending_plan")
-                if pending:
-                    if is_affirmative(data) and pending.get("tasks"):
-                        meta["pending_plan"] = None
-                        plan_tasks = pending.get("tasks", [])
-                        normalized = pending.get("normalized_request", pending.get("original_request", ""))
-                        task_block = "\n".join(f"- [ ] {task}" for task in plan_tasks)
-                        goose_prompt = (
-                            "You are Goose, the coding agent. Execute the plan below.\n"
-                            "Validate the work with tests if possible and report results.\n\n"
-                            f"Working directory: {meta.get('cwd')}\n"
-                            "All file operations must stay within the working directory.\n"
-                            "If asked to write elsewhere, ask for confirmation and propose a relative path.\n\n"
-                            f"User request:\n{normalized}\n\n"
-                            f"Plan:\n```tasks\n{task_block}\n```\n"
-                        )
-                        session.send_input(goose_prompt)
-                    elif is_affirmative(data) and not pending.get("tasks"):
-                        plan_input = pending.get("original_request", "") + "\nAssume sensible defaults."
-                        decision = await orchestrator_plan(plan_input)
-                        if decision and isinstance(decision, dict) and decision.get("action") == "plan":
-                            pending["normalized_request"] = decision.get("normalized_request", pending.get("original_request", ""))
-                            pending["tasks"] = decision.get("tasks", [])
-                            task_block = "\n".join(f"- [ ] {task}" for task in pending.get("tasks", []))
-                            controller_event = make_event(
-                                event_type="assistant",
-                                role="controller",
-                                content=f"Proposed plan:\n```tasks\n{task_block}\n```\nProceed?",
-                                metadata={"controller_action": "plan"},
-                                source="controller",
-                            )
-                            manager.record_event(session_id, controller_event)
-                            await websocket.send_text(json.dumps(controller_event))
-                            meta["pending_plan"] = pending
-                    else:
-                        answers = pending.get("answers", [])
-                        answers.append(data)
-                        pending["answers"] = answers
-                        plan_input = pending.get("original_request", "") + "\nUser clarifications:\n" + "\n".join(answers)
-                        decision = await orchestrator_plan(plan_input)
-                        if decision and isinstance(decision, dict):
-                            action = decision.get("action")
-                            if action == "clarify" and decision.get("questions"):
-                                questions = "\n".join(f"- {q}" for q in decision.get("questions", []))
-                                controller_event = make_event(
-                                    event_type="assistant",
-                                    role="controller",
-                                    content=f"I need a few details plan-ready:\n{questions}",
-                                    metadata={"controller_action": "clarify"},
-                                    source="controller",
-                                )
-                                manager.record_event(session_id, controller_event)
-                                await websocket.send_text(json.dumps(controller_event))
-                                pending["questions"] = decision.get("questions", [])
-                                meta["pending_plan"] = pending
-                                continue
-                            if action == "plan" and decision.get("tasks"):
-                                pending["normalized_request"] = decision.get("normalized_request", pending.get("original_request", ""))
-                                pending["tasks"] = decision.get("tasks", [])
-                                task_block = "\n".join(f"- [ ] {task}" for task in pending.get("tasks", []))
-                                controller_event = make_event(
-                                    event_type="assistant",
-                                    role="controller",
-                                    content=f"Proposed plan:\n\n```tasks\n{task_block}\n```\n\nProceed?",
-                                    metadata={"controller_action": "plan"},
-                                    source="controller",
-                                )
-                                manager.record_event(session_id, controller_event)
-                                await websocket.send_text(json.dumps(controller_event))
-                                meta["pending_plan"] = pending
-                                continue
-                    continue
-
-                decision = await orchestrator_plan(data)
-                if decision and isinstance(decision, dict):
-                    action = decision.get("action")
-                    if action == "clarify" and decision.get("questions"):
-                        questions = "\n".join(f"- {q}" for q in decision.get("questions", []))
-                        controller_event = make_event(
-                            event_type="assistant",
-                            role="controller",
-                            content=f"I need a few details plan-ready:\n{questions}",
-                            metadata={"controller_action": "clarify"},
-                            source="controller",
-                        )
-                        manager.record_event(session_id, controller_event)
-                        await websocket.send_text(json.dumps(controller_event))
-                        meta["pending_plan"] = {
-                            "original_request": data,
-                            "questions": decision.get("questions", []),
-                            "answers": [],
-                        }
-                        continue
-                    if action == "plan" and decision.get("tasks"):
-                        task_block = "\n".join(f"- [ ] {task}" for task in decision.get("tasks", []))
-                        controller_event = make_event(
-                            event_type="assistant",
-                            role="controller",
-                            content=f"Proposed plan:\n\n```tasks\n{task_block}\n```\n\nProceed?",
-                            metadata={"controller_action": "plan"},
-                            source="controller",
-                        )
-                        manager.record_event(session_id, controller_event)
-                        await websocket.send_text(json.dumps(controller_event))
-                        meta["pending_plan"] = {
-                            "original_request": data,
-                            "normalized_request": decision.get("normalized_request", data),
-                            "tasks": decision.get("tasks", []),
-                            "answers": [],
-                        }
-                        continue
-
-                goose_prompt = (
-                    "You are Goose, the coding agent. Build and validate the user's request.\n"
-                    "If critical information is missing, ask up to three focused questions.\n"
-                    "When you finish, provide a concise completion statement.\n\n"
-                    f"Working directory: {meta.get('cwd')}\n"
-                    "All file operations must stay within the working directory.\n"
-                    "If asked to write elsewhere, ask for confirmation and propose a relative path.\n\n"
-                    f"User request:\n{data}\n"
-                )
-                session.send_input(goose_prompt)
+            agent_prompt = (
+                "Build and validate the user's request.\n"
+                "If critical information is missing, ask up to three focused questions.\n"
+                "When you finish, provide a concise completion statement.\n\n"
+                f"Working directory: {meta.get('cwd')}\n"
+                f"User request:\n{data}\n"
+            )
+            await handle_agent_run(agent_prompt)
     except WebSocketDisconnect:
         print(f"Client disconnected from {session_id}")
-        if 'sender_task' in locals():
-            sender_task.cancel()
     except Exception as e:
         print(f"Error in session {session_id}: {e}")
-        if 'sender_task' in locals():
-            sender_task.cancel()
