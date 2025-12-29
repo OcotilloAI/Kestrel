@@ -13,6 +13,7 @@ piper-bin/
 piper-data/
 workdir/
 workspace/
+models/
 
 # Logs
 *.log
