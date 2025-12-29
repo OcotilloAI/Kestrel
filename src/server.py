@@ -632,7 +632,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                                 controller_event = make_event(
                                     event_type="assistant",
                                     role="controller",
-                                    content=f"Proposed plan:\n```tasks\n{task_block}\n```\nProceed?",
+                                    content=f"Proposed plan:\n\n```tasks\n{task_block}\n```\n\nProceed?",
                                     metadata={"controller_action": "plan"},
                                     source="controller",
                                 )
@@ -667,7 +667,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         controller_event = make_event(
                             event_type="assistant",
                             role="controller",
-                            content=f"Proposed plan:\n```tasks\n{task_block}\n```\nProceed?",
+                            content=f"Proposed plan:\n\n```tasks\n{task_block}\n```\n\nProceed?",
                             metadata={"controller_action": "plan"},
                             source="controller",
                         )
@@ -793,7 +793,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                                 controller_event = make_event(
                                     event_type="assistant",
                                     role="controller",
-                                    content=f"Proposed plan:\n```tasks\n{task_block}\n```\nProceed?",
+                                    content=f"Proposed plan:\n\n```tasks\n{task_block}\n```\n\nProceed?",
                                     metadata={"controller_action": "plan"},
                                     source="controller",
                                 )
@@ -828,7 +828,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         controller_event = make_event(
                             event_type="assistant",
                             role="controller",
-                            content=f"Proposed plan:\n```tasks\n{task_block}\n```\nProceed?",
+                            content=f"Proposed plan:\n\n```tasks\n{task_block}\n```\n\nProceed?",
                             metadata={"controller_action": "plan"},
                             source="controller",
                         )
