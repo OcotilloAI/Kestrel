@@ -16,20 +16,25 @@ services:
     working_dir: /app
 
   llama-cpp:
-    image: ghcr.io/ggerganov/llama.cpp:server
+    image: ghcr.io/abetlen/llama-cpp-python:latest
     ports:
       - "8080:8080"
     volumes:
       - ./models:/models
     command:
+      - "python"
       - "-m"
-      - "${LLAMA_MODEL_PATH:-/models/qwen3-coder-32b-a3b-q4.gguf}"
+      - "llama_cpp.server"
+      - "--model"
+      - "${LLAMA_MODEL_PATH:-/models/qwen3-coder-30b-a3b-q4_k_m.gguf}"
       - "--host"
       - "0.0.0.0"
       - "--port"
       - "8080"
-      - "-c"
+      - "--n_ctx"
       - "${LLAMA_CTX:-262144}"
+      - "--n_gpu_layers"
+      - "${LLAMA_N_GPU_LAYERS:--1}"
       - "--alias"
       - "${LLAMA_MODEL_ALIAS:-qwen3-coder}"
     deploy:
