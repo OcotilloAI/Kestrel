@@ -16,7 +16,8 @@ services:
     working_dir: /app
 
   llama-cpp:
-    image: ghcr.io/abetlen/llama-cpp-python:latest
+    build:
+      context: ./docker/llama-cpp
     ports:
       - "8080:8080"
     volumes:
@@ -35,7 +36,7 @@ services:
       - "${LLAMA_CTX:-262144}"
       - "--n_gpu_layers"
       - "${LLAMA_N_GPU_LAYERS:--1}"
-      - "--alias"
+      - "--model_alias"
       - "${LLAMA_MODEL_ALIAS:-qwen3-coder}"
     deploy:
       resources:

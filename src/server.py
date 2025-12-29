@@ -57,7 +57,10 @@ manager = SessionManager()
 llm_client = LLMClient()
 agent_runner = AgentRunner(llm_client)
 CONTROLLER_ENABLED = os.environ.get("GOOSE_CONTROLLER_ENABLED", "0") == "1"
-CONTROLLER_MODEL = os.environ.get("GOOSE_CONTROLLER_MODEL", os.environ.get("GOOSE_MODEL", "qwen3-coder:30b-a3b-q4_K_M"))
+CONTROLLER_MODEL = os.environ.get(
+    "LLM_CONTROLLER_MODEL",
+    os.environ.get("GOOSE_CONTROLLER_MODEL", os.environ.get("LLM_MODEL", "qwen3-coder:30b-a3b-q4_K_M")),
+)
 
 @app.on_event("startup")
 async def startup_event():
@@ -97,7 +100,7 @@ async def generate_summary(source_text: str) -> str:
         "Output exactly three sentences in this order:\n"
         "1) \"I did ...\"\n"
         "2) \"I learned ...\"\n"
-        "3) \"Next ...\"\n"
+        "3) \"Next ...?\" (ask whether we should proceed)\n"
         "Keep each sentence concise and factual. No bullet points or preamble.\n\n"
         f"---\n{source_text}\n---"
     )
@@ -107,6 +110,7 @@ async def generate_summary(source_text: str) -> str:
                 text.strip().startswith("I did")
                 and "I learned" in text
                 and "Next" in text
+                and "?" in text
             )
 
         def extract_required_phrases(source: str) -> list[str]:
@@ -142,19 +146,36 @@ async def generate_summary(source_text: str) -> str:
             haystack = text.lower()
             return all(p.lower() in haystack for p in phrases[:2])
 
-        if raw_summary and has_format(raw_summary) and mentions_source(raw_summary, source_text) and includes_required_phrases(raw_summary, source_text):
-            return raw_summary.strip()
+        def enforce_next_question(text: str) -> str:
+            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s.strip()]
+            if len(sentences) < 3:
+                lowered = text.lower()
+                if any(token in lowered for token in ("proceed", "continue", "answer")):
+                    return text.strip()
+                if "next" in lowered:
+                    return re.sub(r"(?i)next\s*[^.?!]*\??", "Next, should I proceed?", text.strip())
+                return text.strip().rstrip() + " Next, should I proceed?"
+            next_sentence = sentences[2]
+            if any(token in next_sentence.lower() for token in ("proceed", "continue", "answer")):
+                return text.strip()
+            sentences[2] = "Next, should I proceed?"
+            return " ".join(sentences)
 
-        code_blocks = len(re.findall(r"```[\\s\\S]*?```", source_text))
-        clean = re.sub(r"```[\\s\\S]*?```", " code block ", source_text)
-        clean = re.sub(r"\\s+", " ", clean).strip()
+        if raw_summary:
+            raw_summary = enforce_next_question(raw_summary.strip())
+        if raw_summary and has_format(raw_summary) and mentions_source(raw_summary, source_text) and includes_required_phrases(raw_summary, source_text):
+            return raw_summary
+
+        code_blocks = len(re.findall(r"```[\s\S]*?```", source_text))
+        clean = re.sub(r"```[\s\S]*?```", " code block ", source_text)
+        clean = re.sub(r"\s+", " ", clean).strip()
         snippet_words = clean.split()[:12]
         snippet = " ".join(snippet_words) if snippet_words else "the current task context"
         block_phrase = f"{code_blocks} code block(s)" if code_blocks else "no code blocks"
-        return (
+        return enforce_next_question(
             f"I did review the response and noted {block_phrase}.\n"
             f"I learned {snippet}.\n"
-            f"Next validate the output and iterate on any remaining gaps."
+            f"Next should we proceed to validate the output and iterate on any remaining gaps?"
         )
 
     try:
@@ -224,7 +245,6 @@ def is_affirmative(text: str) -> bool:
 async def orchestrator_plan(user_text: str) -> Optional[dict]:
     if not CONTROLLER_ENABLED:
         return None
-    ollama_host = os.environ.get("OLLAMA_HOST", "http://ollama:11434")
     prompt = (
         "You are the orchestrator for a voice-first software development assistant.\n"
         "Your job is to turn the user's request into an actionable plan or ask clarifying questions.\n"
@@ -242,15 +262,14 @@ async def orchestrator_plan(user_text: str) -> Optional[dict]:
         f"User request:\n{user_text}\n"
     )
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{ollama_host}/api/generate",
-                json={"model": CONTROLLER_MODEL, "prompt": prompt, "stream": False},
-            )
-            response.raise_for_status()
-            data = response.json()
-            raw = data.get("response", "").strip()
-            return json.loads(raw)
+        raw = await llm_client.chat(
+            [
+                {"role": "system", "content": "You are a concise planning assistant."},
+                {"role": "user", "content": prompt},
+            ],
+            model_override=CONTROLLER_MODEL,
+        )
+        return json.loads(raw)
     except Exception:
         return None
 
@@ -461,6 +480,16 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             manager.record_event(session_id, detail_event)
             await websocket.send_text(json.dumps(detail_event))
 
+    async def send_phase_summary(text: str) -> None:
+        summary_event = make_event(
+            event_type="summary",
+            role="system",
+            content=text,
+            source="summary",
+        )
+        manager.record_event(session_id, summary_event)
+        await websocket.send_text(json.dumps(summary_event))
+
     meta = manager.get_session_metadata(session_id) or {}
     cwd = meta.get("cwd", "unknown")
     if not meta.get("welcome_sent"):
@@ -483,6 +512,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         meta["welcome_sent"] = True
     async def handle_agent_run(user_text: str):
         assistant_chunks: list[str] = []
+        tool_chunks: list[str] = []
+        summary_chunks: list[str] = []
         async for event in agent_runner.run(session, user_text):
             event_type = event.get("type", "assistant")
             role = event.get("role", "assistant")
@@ -500,26 +531,30 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             await websocket.send_text(json.dumps(outgoing))
             if event_type == "assistant" and content:
                 assistant_chunks.append(content)
+            if event_type == "tool" and content:
+                tool_chunks.append(content)
+            if content and event_type in {"assistant", "tool", "system"}:
+                summary_chunks.append(content)
         combined = "".join(assistant_chunks).strip()
-        if combined:
-            try:
-                summary = await generate_summary(combined)
-                summary_event = make_event(event_type="summary", role="system", content=summary, source="summary")
-                manager.record_event(session_id, summary_event)
-                await websocket.send_text(json.dumps(summary_event))
-                recap = await generate_recap(combined)
-                recap_event = make_event(event_type="recap", role="system", content=recap, source="recap")
-                manager.record_event(session_id, recap_event)
-                await websocket.send_text(json.dumps(recap_event))
-            except Exception as e:
-                error_event = make_event(
-                    event_type="system",
-                    role="system",
-                    content=f"Summary failed: {e}",
-                    source="system",
-                )
-                manager.record_event(session_id, error_event)
-                await websocket.send_text(json.dumps(error_event))
+        summary_source = "\n".join(summary_chunks).strip()
+        if not summary_source:
+            summary_source = "No agent output was captured for this phase."
+        try:
+            summary = await generate_summary(summary_source)
+            await send_phase_summary(summary)
+            recap = await generate_recap(summary_source)
+            recap_event = make_event(event_type="recap", role="system", content=recap, source="recap")
+            manager.record_event(session_id, recap_event)
+            await websocket.send_text(json.dumps(recap_event))
+        except Exception as e:
+            error_event = make_event(
+                event_type="system",
+                role="system",
+                content=f"Summary failed: {e}",
+                source="system",
+            )
+            manager.record_event(session_id, error_event)
+            await websocket.send_text(json.dumps(error_event))
 
     try:
         while True:
@@ -564,6 +599,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         )
                         manager.record_event(session_id, controller_event)
                         await websocket.send_text(json.dumps(controller_event))
+                        await send_phase_summary(
+                            "I did propose the plan above.\n"
+                            "I learned we should wait for your confirmation.\n"
+                            "Next, should I proceed?"
+                        )
                         meta["pending_plan"] = pending
                 else:
                     answers = pending.get("answers", [])
@@ -584,6 +624,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                             )
                             manager.record_event(session_id, controller_event)
                             await websocket.send_text(json.dumps(controller_event))
+                            await send_phase_summary(
+                                "I did ask a few clarifying questions above.\n"
+                                "I learned we need those details to produce a plan.\n"
+                                "Next, could you answer them?"
+                            )
                             pending["questions"] = decision.get("questions", [])
                             meta["pending_plan"] = pending
                             continue
@@ -600,6 +645,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                             )
                             manager.record_event(session_id, controller_event)
                             await websocket.send_text(json.dumps(controller_event))
+                            await send_phase_summary(
+                                "I did propose the plan above.\n"
+                                "I learned we should wait for your confirmation.\n"
+                                "Next, should I proceed?"
+                            )
                             meta["pending_plan"] = pending
                             continue
                 continue
@@ -618,6 +668,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     )
                     manager.record_event(session_id, controller_event)
                     await websocket.send_text(json.dumps(controller_event))
+                    await send_phase_summary(
+                        "I did ask a few clarifying questions above.\n"
+                        "I learned we need those details to produce a plan.\n"
+                        "Next, could you answer them?"
+                    )
                     meta["pending_plan"] = {
                         "original_request": data,
                         "questions": decision.get("questions", []),
@@ -635,6 +690,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     )
                     manager.record_event(session_id, controller_event)
                     await websocket.send_text(json.dumps(controller_event))
+                    await send_phase_summary(
+                        "I did propose the plan above.\n"
+                        "I learned we should wait for your confirmation.\n"
+                        "Next, should I proceed?"
+                    )
                     meta["pending_plan"] = {
                         "original_request": data,
                         "normalized_request": decision.get("normalized_request", data),
