@@ -4,23 +4,34 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - ollama
+      - llama-cpp
     environment:
-      - LLM_PROVIDER=ollama
-      - LLM_MODEL=qwen3-coder:30b-a3b-q4_K_M
-      - OLLAMA_HOST=http://ollama:11434
+      - LLM_PROVIDER=openai
+      - LLM_MODEL=${LLAMA_MODEL_ALIAS:-qwen3-coder}
+      - LLM_API_URL=http://llama-cpp:8080
       - GOOSE_WORKDIR=/workspace
       - GOOSE_CONTROLLER_ENABLED=1
     volumes:
       - ./workspace:/workspace
     working_dir: /app
 
-  ollama:
-    image: ollama/ollama:latest
+  llama-cpp:
+    image: ghcr.io/ggerganov/llama.cpp:server
     ports:
-      - "11434:11434"
+      - "8080:8080"
     volumes:
-      - ollama_data:/root/.ollama
+      - ./models:/models
+    command:
+      - "-m"
+      - "${LLAMA_MODEL_PATH:-/models/qwen3-coder-32b-a3b-q4.gguf}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "-c"
+      - "${LLAMA_CTX:-262144}"
+      - "--alias"
+      - "${LLAMA_MODEL_ALIAS:-qwen3-coder}"
     deploy:
       resources:
         reservations:
@@ -28,6 +39,3 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-
-volumes:
-  ollama_data:
