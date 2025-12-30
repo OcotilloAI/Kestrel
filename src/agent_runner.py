@@ -35,11 +35,11 @@ class AgentRunner:
         session: AgentSession,
         user_text: str,
     ) -> AsyncGenerator[Dict[str, Any], None]:
+        session.history.append({"role": "user", "content": user_text})
         messages: List[Dict[str, str]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
+            *session.history,
         ]
-        messages.extend(session.history)
-        messages.append({"role": "user", "content": user_text})
 
         for _ in range(self.max_steps):
             response = await self.client.chat(messages)
@@ -106,6 +106,12 @@ class AgentRunner:
                 }
                 yield tool_response
                 messages.append(
+                    {
+                        "role": "system",
+                        "content": f"Tool result ({tool_name}): {tool_result_text}",
+                    }
+                )
+                session.history.append(
                     {
                         "role": "system",
                         "content": f"Tool result ({tool_name}): {tool_result_text}",
