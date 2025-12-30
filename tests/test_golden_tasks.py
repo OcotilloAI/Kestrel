@@ -18,6 +18,19 @@ def _ws_url() -> str:
     host = parsed.netloc or parsed.path
     return f"{scheme}://{host}"
 
+def _project_from_cwd(cwd: str | None) -> str | None:
+    if not cwd:
+        return None
+    normalized = cwd.replace("\\", "/")
+    parts = [p for p in normalized.split("/") if p]
+    if "workspace" in parts:
+        idx = parts.index("workspace")
+        if len(parts) > idx + 1:
+            return parts[idx + 1]
+    if len(parts) >= 2:
+        return parts[-2]
+    return None
+
 
 def _await(predicate, timeout: float, interval: float = 0.1) -> bool:
     deadline = time.time() + timeout
@@ -31,7 +44,9 @@ def _await(predicate, timeout: float, interval: float = 0.1) -> bool:
 def _run_task(prompt: str) -> None:
     res = requests.post(f"{BASE_URL}/session/create", json={"cwd": "."})
     res.raise_for_status()
-    session_id = res.json()["session_id"]
+    payload = res.json()
+    session_id = payload["session_id"]
+    project_name = _project_from_cwd(payload.get("cwd"))
 
     ws = websocket.WebSocket()
     ws.connect(f"{_ws_url()}/ws/{session_id}")
@@ -73,6 +88,8 @@ def _run_task(prompt: str) -> None:
     listener_thread.join(timeout=2)
 
     requests.delete(f"{BASE_URL}/session/{session_id}")
+    if project_name:
+        requests.delete(f"{BASE_URL}/project/{project_name}")
 
     assert got_plan_summary, "Expected a summary after the plan phase"
     assert got_final_summary, "Expected a summary after execution"
