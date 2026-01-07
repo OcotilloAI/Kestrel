@@ -86,7 +86,7 @@ async def get():
 def _summary_model() -> str:
     return os.environ.get(
         "LLM_SUMMARIZER_MODEL",
-        os.environ.get("GOOSE_SUMMARIZER_MODEL", os.environ.get("LLM_MODEL", "qwen3-coder:30b-a3b-q4_K_M")),
+        os.environ.get("SUMMARIZER_MODEL", os.environ.get("LLM_MODEL", "qwen3-coder:30b-a3b-q4_K_M")),
     )
 
 async def generate_summary(source_text: str) -> str:

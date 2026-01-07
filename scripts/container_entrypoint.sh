@@ -2,7 +2,7 @@
 set -e
 
 # Configuration
-MODEL_NAME="${LLM_MODEL:-${GOOSE_MODEL:-qwen3-coder:30b-a3b-q4_K_M}}"
+MODEL_NAME="${LLM_MODEL:-qwen3-coder:30b-a3b-q4_K_M}"
 export LLM_PROVIDER="${LLM_PROVIDER:-ollama}"
 export LLM_MODEL="${MODEL_NAME}"
 
@@ -36,6 +36,6 @@ if [ "$LLM_PROVIDER" = "ollama" ]; then
 fi
 
 echo "Starting Kestrel Server..."
-# Add src to PYTHONPATH so 'from goose_wrapper import ...' works
+# Add src to PYTHONPATH
 export PYTHONPATH=$PYTHONPATH:/app/src
 exec uvicorn src.server:app --host 0.0.0.0 --port 8000

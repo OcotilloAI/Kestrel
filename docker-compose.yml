@@ -9,8 +9,7 @@ services:
       - LLM_PROVIDER=openai
       - LLM_MODEL=${LLAMA_MODEL_ALIAS:-qwen3-coder}
       - LLM_API_URL=http://llama-cpp:8080
-      - GOOSE_WORKDIR=/workspace
-      - GOOSE_CONTROLLER_ENABLED=1
+      - KESTREL_WORKDIR=/workspace
     volumes:
       - ./workspace:/workspace
     working_dir: /app

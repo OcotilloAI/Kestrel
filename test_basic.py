@@ -30,7 +30,7 @@ async def test_connection():
                         
                     # It's a response! (Simple check, assumes anything else is a response)
                     if message.startswith("G: ") and "[LOG]" not in message:
-                        print("Success: Received response from Goose.")
+                        print("Success: Received response from agent.")
                         break
                         
                 except asyncio.TimeoutError:

@@ -1,28 +1,49 @@
 # Kestrel
 
-This project aims to provide a seamless voice interface for the [Block Goose](https://github.com/block/goose) coding agent, enabling hands-free, conversational interaction with your AI developer.
+Kestrel is a voice-first software development interface. It provides hands-free, conversational interaction with coding agents via STT/TTS orchestration.
 
 ## Vision
 
-The goal is to extend the capabilities of `goose` by wrapping it in a real-time speech-processing layer. This allows users to:
-1.  **Speak** their instructions and intent naturally.
+Kestrel wraps coding agents (Claude Code, Codex, Gemini CLI, local LLMs via ollama/llama.cpp) in a real-time speech-processing layer:
+1.  **Speak** your instructions and intent naturally.
 2.  **Hear** the agent's responses, plans, and summaries.
 3.  **Interrupt** or guide the agent mid-task (future goal).
 
+## Architecture
+
+- **Core**: LLM + tool loop with OpenAI-compatible API
+- **Orchestrator**: Session state, transcripts, tool context
+- **STT/TTS**: Browser/OS speech recognition and synthesis (client-side by default)
+- **Backend**: Configurable - local models (ollama) or cloud APIs (OpenAI, Anthropic, etc.)
+
+See `ARCHITECTURE.md` for full details.
+
 ## Status
 
-**Current Phase:** Architecture & Planning.
-Previous prototype code has been removed to focus on this new direction.
+**Current Phase:** Stability & UX improvements.
+See `PLAN.md` for active work.
 
 ## Prerequisites
 
-*   **Goose**: You must have `goose` installed and configured on your system.
-*   **Python 3.10+**: For the bridge logic.
-*   **Piper TTS**: High-quality, local neural text-to-speech.
-*   **Whisper**: Robust speech-to-text.
+*   **Python 3.10+**: For the server.
+*   **Node.js 18+**: For the web UI.
+*   **LLM Backend**: Either:
+    - Local: ollama with a coding model (e.g., `qwen2.5-coder`)
+    - Cloud: OpenAI API key or compatible endpoint
 
-## Roadmap
+## Quick Start
 
-1.  **Proof of Concept**: A simple Python script that pipes STT -> Goose -> TTS.
-2.  **Streamed Audio**: Lower latency processing.
-3.  **VAD Integration**: Smartly detect when the user has finished speaking.
+```bash
+# Setup
+./setup.sh
+
+# Start (with local LLM)
+export LLM_BASE_URL=http://localhost:11434/v1
+export LLM_MODEL=qwen2.5-coder:7b
+./start.sh
+```
+
+## Development
+
+See `WORKFLOW.md` in the development vault for the full coding workflow.
+See `CONTRIBUTING.md` for contribution guidelines.

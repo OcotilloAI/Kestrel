@@ -17,10 +17,13 @@ source .venv/bin/activate
 echo "Installing Python dependencies..."
 pip install -r requirements.txt
 
-# 3. Check for Goose Binary
-if [ ! -f "goose-bin" ]; then
-    echo "Goose binary not found. Please ensure 'goose-bin' is present in the root."
-    echo "You might need to build it using: docker build -t goose-cli goose/ && docker create --name temp goose-cli && docker cp temp:/usr/local/bin/goose ./goose-bin && docker rm temp"
+# 3. Check LLM Backend
+if [ -z "$LLM_BASE_URL" ]; then
+    echo ""
+    echo "Note: LLM_BASE_URL not set. You'll need to configure your LLM backend."
+    echo "For local ollama:  export LLM_BASE_URL=http://localhost:11434/v1"
+    echo "For OpenAI:        export LLM_BASE_URL=https://api.openai.com/v1"
 fi
 
+echo ""
 echo "Setup complete. Run ./start.sh to begin."

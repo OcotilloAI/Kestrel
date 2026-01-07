@@ -8,14 +8,19 @@ cd "$(dirname "$0")"
 if [ -d ".venv" ]; then
     source .venv/bin/activate
 else
-    echo "Virtual environment not found. Please run setup first."
+    echo "Virtual environment not found. Please run ./setup.sh first."
     exit 1
 fi
 
-# Check if Goose is configured
-if [ ! -f "$HOME/.config/goose/config.yaml" ]; then
-    echo "Goose is not configured. Starting configuration..."
-    ./goose-bin configure
+# Check LLM configuration
+if [ -z "$LLM_BASE_URL" ]; then
+    echo "Warning: LLM_BASE_URL not set. Using default (http://localhost:11434/v1)"
+    export LLM_BASE_URL="http://localhost:11434/v1"
+fi
+
+if [ -z "$LLM_MODEL" ]; then
+    echo "Warning: LLM_MODEL not set. Using default (qwen2.5-coder:7b)"
+    export LLM_MODEL="qwen2.5-coder:7b"
 fi
 
 # Check if Frontend is built
@@ -26,4 +31,5 @@ fi
 
 # Run the web server
 echo "Starting Kestrel Web Server..."
+echo "LLM: $LLM_MODEL @ $LLM_BASE_URL"
 uvicorn src.server:app --host 0.0.0.0 --port 8000 --reload

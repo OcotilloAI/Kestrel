@@ -7,7 +7,7 @@ import httpx
 class LLMClient:
     def __init__(self) -> None:
         self.provider = os.environ.get("LLM_PROVIDER", "ollama").lower()
-        self.model = os.environ.get("LLM_MODEL", os.environ.get("GOOSE_MODEL", "qwen3-coder:30b-a3b-q4_K_M"))
+        self.model = os.environ.get("LLM_MODEL", "qwen3-coder:30b-a3b-q4_K_M")
         self.base_url = os.environ.get("LLM_API_URL")
         self.api_key = os.environ.get("LLM_API_KEY")
 

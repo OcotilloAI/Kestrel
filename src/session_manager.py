@@ -23,7 +23,7 @@ class SessionManager:
         if workdir_root:
              self.workdir_root = Path(workdir_root)
         else:
-             self.workdir_root = Path(os.environ.get("GOOSE_WORKDIR", os.getcwd()))
+             self.workdir_root = Path(os.environ.get("KESTREL_WORKDIR", os.getcwd()))
         
         self.sessions_dir = self.workdir_root / "sessions"
         self.sessions_dir.mkdir(parents=True, exist_ok=True)

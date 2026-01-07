@@ -24,6 +24,6 @@
 4.  **Execution:** Use `scripts/run_ui_e2e.sh` (optionally with `BASE_URL=...` or a positional URL) for UI e2e tests.
 
 ## Technical Context
-- **Project**: Kestrel (FastAPI + Goose integration)
-- **Environment**: Linux (Container/Dev Environment)
-- **Goose Configuration**: Located at `~/.config/goose/config.yaml`. Requires `developer` extension for system access.
+- **Project**: Kestrel (FastAPI + LLM integration via OpenAI-compatible API)
+- **Environment**: Linux (Container/Dev Environment) or macOS
+- **LLM Configuration**: Via environment variables (`LLM_BASE_URL`, `LLM_MODEL`)
