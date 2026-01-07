@@ -1,5 +1,5 @@
 import os
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 
 import httpx
 
@@ -18,6 +18,11 @@ class LLMClient:
                 self.base_url = "http://localhost:8080"
 
         self.base_url = self.base_url.rstrip("/")
+        tool_call_pref = os.environ.get("LLM_TOOL_CALL_MESSAGES")
+        if tool_call_pref is None:
+            self.supports_tool_call_messages = "llama-cpp" not in self.base_url
+        else:
+            self.supports_tool_call_messages = tool_call_pref.strip().lower() not in {"0", "false", "no"}
 
     def _headers(self) -> Dict[str, str]:
         headers: Dict[str, str] = {"Content-Type": "application/json"}
@@ -25,11 +30,16 @@ class LLMClient:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
-    async def chat(self, messages: List[Dict[str, str]], model_override: Optional[str] = None) -> str:
+    async def chat(
+        self,
+        messages: List[Dict[str, str]],
+        model_override: Optional[str] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+    ) -> str:
         model = model_override or self.model
         if self.provider == "ollama":
             return await self._chat_ollama(messages, model)
-        return await self._chat_openai(messages, model)
+        return await self._chat_openai(messages, model, response_format=response_format)
 
     async def _chat_ollama(self, messages: List[Dict[str, str]], model: str) -> str:
         payload = {
@@ -37,7 +47,7 @@ class LLMClient:
             "messages": messages,
             "stream": False,
         }
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.post(
                 f"{self.base_url}/api/chat",
                 headers=self._headers(),
@@ -48,12 +58,19 @@ class LLMClient:
             message = data.get("message", {})
             return str(message.get("content", "")).strip()
 
-    async def _chat_openai(self, messages: List[Dict[str, str]], model: str) -> str:
-        payload = {
+    async def _chat_openai(
+        self,
+        messages: List[Dict[str, str]],
+        model: str,
+        response_format: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        payload: Dict[str, Any] = {
             "model": model,
             "messages": messages,
         }
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        if response_format:
+            payload["response_format"] = response_format
+        async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.post(
                 f"{self.base_url}/v1/chat/completions",
                 headers=self._headers(),
@@ -66,3 +83,37 @@ class LLMClient:
                 return ""
             message = choices[0].get("message", {})
             return str(message.get("content", "")).strip()
+
+    async def chat_with_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        model_override: Optional[str] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        model = model_override or self.model
+        if self.provider == "ollama":
+            raise ValueError("Tool calling is not supported for the Ollama provider.")
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+        }
+        if response_format:
+            payload["response_format"] = response_format
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.post(
+                f"{self.base_url}/v1/chat/completions",
+                headers=self._headers(),
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+            choices = data.get("choices", [])
+            if not choices:
+                return {"content": "", "tool_calls": []}
+            message = choices[0].get("message", {})
+            return {
+                "content": str(message.get("content", "")).strip(),
+                "tool_calls": message.get("tool_calls") or [],
+            }

@@ -4,7 +4,7 @@ from stt import FasterWhisperSTT
 from tts import PiperTTS
 from audio import AudioRecorder
 from agent_session import AgentSession
-from agent_runner import AgentRunner
+from coder_agent import CoderAgent as AgentRunner
 import asyncio
 from llm_client import LLMClient
 

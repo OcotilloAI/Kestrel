@@ -1,28 +1,15 @@
 import { test, expect } from '@playwright/test';
+import { ensureSidebarVisible, handleLogin, ensureProjectExists } from './utils';
 
 test('create and delete a branch from the sidebar', async ({ page }) => {
   const branchName = `pw-branch-${Date.now().toString().slice(-6)}`;
 
   await page.goto('/');
-
-  const password = page.getByPlaceholder('Password');
-  if (await password.count()) {
-    await password.fill('k3str3lrocks');
-    await page.getByRole('button', { name: 'Login' }).click();
-  }
-
-  const toggle = page.locator('[aria-label="Toggle sidebar"], .mobile-menu-btn');
-  await expect(toggle.first()).toBeVisible();
-  await toggle.first().click();
+  await handleLogin(page);
+  await ensureSidebarVisible(page);
 
   await expect(page.getByTestId('project-select')).toBeVisible();
-
-  const projectSelect = page.getByTestId('project-select');
-  const projectOptions = await projectSelect.locator('option').allTextContents();
-  if (projectOptions.length === 0) {
-    await page.getByTestId('project-create-button').click();
-    await page.waitForTimeout(1200);
-  }
+  await ensureProjectExists(page);
 
   await page.getByTestId('branch-name-input').fill(branchName);
   await page.getByTestId('branch-create-main-button').click();

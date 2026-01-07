@@ -116,7 +116,8 @@ class SessionManager:
         branch_name = None
         if project_root and self._is_relative_to(final_cwd, project_root):
             branch_name = final_cwd.name
-        self._sessions[session_id] = AgentSession(cwd=str(final_cwd))
+        session = AgentSession(cwd=str(final_cwd))
+        self._sessions[session_id] = session
         self._session_metadata[session_id] = {
             "id": session_id,
             "name": session_name,
@@ -125,7 +126,17 @@ class SessionManager:
             "branch_name": branch_name,
         }
         self._transcripts[session_id] = []
-        self._transcript_paths[session_id] = self._build_transcript_path(branch_name, project_root, session_id)
+        transcript_path = self._build_transcript_path(branch_name, project_root, session_id)
+        self._transcript_paths[session_id] = transcript_path
+        if transcript_path.exists():
+            context_seed = self._extract_context_seed(transcript_path)
+            history_seed = self._extract_history_seed(transcript_path, max_events=6)
+            if history_seed:
+                session.history.extend(history_seed)
+            if context_seed:
+                self._session_metadata[session_id]["context_seed"] = context_seed
+            if transcript_path.stat().st_size > 0:
+                self._session_metadata[session_id]["welcome_sent"] = True
         self.logger.info(f"Created session '{session_name}' ({session_id}) in {final_cwd}")
         return session_id
 
@@ -386,6 +397,77 @@ class SessionManager:
             decoded_event["content"] = content
             decoded.append(decoded_event)
         return self._aggregate_transcript(decoded)
+
+    def _extract_context_seed(self, path: Path) -> str:
+        last_user = None
+        last_plan = None
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    content_b64 = event.get("body_b64")
+                    if content_b64:
+                        try:
+                            content = base64.b64decode(content_b64.encode("ascii")).decode("utf-8")
+                        except Exception:
+                            content = ""
+                    else:
+                        content = str(event.get("content", ""))
+                    role = event.get("role")
+                    source = event.get("source")
+                    if role == "user" and content:
+                        last_user = content
+                    if source == "controller" and "Proposed plan" in content:
+                        last_plan = content
+        except Exception:
+            return ""
+        parts: List[str] = []
+        if last_user:
+            parts.append(f"Last user request: {last_user}")
+        if last_plan:
+            parts.append(f"Last plan:\n{last_plan}")
+        return "\n".join(parts).strip()
+
+    def _extract_history_seed(self, path: Path, max_events: int = 6) -> List[Dict[str, str]]:
+        seeded: List[Dict[str, str]] = []
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                events = []
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        events.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        except Exception:
+            return seeded
+        for event in reversed(events):
+            if len(seeded) >= max_events:
+                break
+            role = event.get("role")
+            if role not in {"user", "assistant"}:
+                continue
+            content_b64 = event.get("body_b64")
+            if content_b64:
+                try:
+                    content = base64.b64decode(content_b64.encode("ascii")).decode("utf-8")
+                except Exception:
+                    content = ""
+            else:
+                content = str(event.get("content", ""))
+            if not content:
+                continue
+            seeded.append({"role": role, "content": content})
+        seeded.reverse()
+        return seeded
 
     def _aggregate_transcript(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         aggregated: List[Dict[str, Any]] = []

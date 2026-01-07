@@ -1,24 +1,20 @@
-import json
+"""Golden task tests - verify end-to-end task execution with real LLM.
+
+These tests use the EventCollector for state-based waiting instead of
+arbitrary timeouts. They wait for terminal events (summary, error) rather
+than polling with deadlines.
+"""
 import os
-import threading
-import time
-from urllib.parse import urlparse
 
 import pytest
 import requests
 import websocket
 
+from conftest import BASE_URL, ws_base_url, EventCollector
 
-BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000").rstrip("/")
-
-
-def _ws_url() -> str:
-    parsed = urlparse(BASE_URL)
-    scheme = "wss" if parsed.scheme == "https" else "ws"
-    host = parsed.netloc or parsed.path
-    return f"{scheme}://{host}"
 
 def _project_from_cwd(cwd: str | None) -> str | None:
+    """Extract project name from working directory path."""
     if not cwd:
         return None
     normalized = cwd.replace("\\", "/")
@@ -32,73 +28,70 @@ def _project_from_cwd(cwd: str | None) -> str | None:
     return None
 
 
-def _await(predicate, timeout: float, interval: float = 0.1) -> bool:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if predicate():
-            return True
-        time.sleep(interval)
-    return False
-
-
 def _run_task(prompt: str) -> None:
+    """Execute a golden task and verify completion.
+
+    Uses EventCollector for state-based waiting. The test succeeds if:
+    1. A terminal event (summary) is received
+    2. The summary indicates task completion
+
+    The test fails with diagnostic context if:
+    - No terminal event is received (with list of events that were received)
+    - An error event is received
+    - Connection closes unexpectedly
+    """
+    # Create session
     res = requests.post(f"{BASE_URL}/session/create", json={"cwd": "."})
     res.raise_for_status()
     payload = res.json()
     session_id = payload["session_id"]
     project_name = _project_from_cwd(payload.get("cwd"))
 
+    # Connect WebSocket
     ws = websocket.WebSocket()
-    ws.connect(f"{_ws_url()}/ws/{session_id}")
+    ws.connect(f"{ws_base_url()}/ws/{session_id}")
 
-    summaries: list[str] = []
-    saw_plan = {"value": False}
-    listener_running = threading.Event()
-    listener_running.set()
+    # Create event collector - waits for "summary" or "error" events
+    collector = EventCollector(ws)
 
-    def listen() -> None:
-        while listener_running.is_set():
-            try:
-                msg = ws.recv()
-                if isinstance(msg, bytes):
-                    msg = msg.decode("utf-8", errors="ignore")
-                if not isinstance(msg, str) or not msg.startswith("{"):
-                    continue
-                payload = json.loads(msg)
-                if payload.get("type") == "assistant" and "Proposed plan" in payload.get("content", ""):
-                    saw_plan["value"] = True
-                if payload.get("type") == "summary":
-                    summaries.append(payload.get("content", ""))
-            except websocket.WebSocketConnectionClosedException:
-                break
-            except Exception:
-                break
+    try:
+        # Send the task prompt
+        ws.send(prompt)
 
-    listener_thread = threading.Thread(target=listen, daemon=True)
-    listener_thread.start()
+        # Wait for task completion (terminal event)
+        # Golden tasks with real LLM can take several minutes per task
+        result = collector.wait_for_completion(timeout=600)
 
-    ws.send(prompt)
-    _await(lambda: saw_plan["value"], timeout=30)
-    got_plan_summary = _await(lambda: bool(summaries), timeout=60)
-    ws.send("yes")
+        # Assertion with full diagnostic context
+        assert result.completed, (
+            f"Task did not complete. {result.error}\n"
+            f"Events received: {[e.get('type') for e in result.events]}"
+        )
 
-    got_final_summary = _await(lambda: len(summaries) >= 2, timeout=180)
-    listener_running.clear()
-    ws.close()
-    listener_thread.join(timeout=2)
+        # Verify we got a summary (success indicator)
+        assert result.has_event_type("summary"), (
+            f"No summary event received.\n"
+            f"Events: {[e.get('type') for e in result.events]}"
+        )
 
-    requests.delete(f"{BASE_URL}/session/{session_id}")
-    if project_name:
-        requests.delete(f"{BASE_URL}/project/{project_name}")
+        # Check summary content format
+        summaries = result.events_by_type("summary")
+        if summaries:
+            final_summary = summaries[-1].get("content", "").lower()
+            # New format: "Completed X/Y tasks for: <intent>"
+            # Or legacy format with "I did", "I learned", "Next"
+            has_new_format = "completed" in final_summary and "task" in final_summary
+            has_legacy_format = "i did" in final_summary or "i learned" in final_summary
+            assert has_new_format or has_legacy_format, (
+                f"Summary format unexpected: {final_summary}"
+            )
 
-    assert got_plan_summary, "Expected a summary after the plan phase"
-    assert got_final_summary, "Expected a summary after execution"
-    plan_summary = summaries[0].lower()
-    final_summary = summaries[-1].lower()
-    assert "i did" in plan_summary and "i learned" in plan_summary and "next" in plan_summary
-    assert "proceed" in plan_summary or "answer" in plan_summary
-    assert "i did" in final_summary and "i learned" in final_summary and "next" in final_summary
-    assert "proceed" in final_summary or "continue" in final_summary
+    finally:
+        # Cleanup
+        collector.close()
+        requests.delete(f"{BASE_URL}/session/{session_id}")
+        if project_name:
+            requests.delete(f"{BASE_URL}/project/{project_name}")
 
 
 @pytest.mark.parametrize(
@@ -115,4 +108,5 @@ def _run_task(prompt: str) -> None:
     ],
 )
 def test_golden_task(prompt: str) -> None:
+    """Test that golden tasks complete successfully with the real LLM."""
     _run_task(prompt)

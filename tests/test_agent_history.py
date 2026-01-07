@@ -1,18 +1,19 @@
 import asyncio
+import json
 import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 
-from agent_runner import AgentRunner
+from coder_agent import CoderAgent as AgentRunner
 from agent_session import AgentSession
 
 
 class DummyClient:
-    def __init__(self, responses: list[str]) -> None:
+    def __init__(self, responses: list[dict]) -> None:
         self._responses = list(responses)
 
-    async def chat(self, messages, model_override=None):
+    async def chat_with_tools(self, messages, tools, model_override=None, response_format=None):
         return self._responses.pop(0)
 
 
@@ -20,8 +21,22 @@ def test_agent_history_persists_user_and_tool(tmp_path):
     session = AgentSession(cwd=str(tmp_path))
     client = DummyClient(
         [
-            '{"type":"tool","name":"list_dir","arguments":{"path":"."}}',
-            '{"type":"final","content":"Done."}',
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "function": {
+                            "name": "list_dir",
+                            "arguments": json.dumps({"path": "."}),
+                        },
+                    }
+                ],
+            },
+            {
+                "content": "Done.",
+                "tool_calls": [],
+            },
         ]
     )
     runner = AgentRunner(client=client, max_steps=4)

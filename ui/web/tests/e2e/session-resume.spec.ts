@@ -1,24 +1,16 @@
 import { test, expect } from '@playwright/test';
+import { ensureSidebarVisible, handleLogin } from './utils';
 
 test('reload preserves transcript and session selection', async ({ page }) => {
   const message = `resume-${Date.now().toString().slice(-6)}`;
 
   await page.goto('/');
-  const password = page.getByPlaceholder('Password');
-  if (await password.count()) {
-    await password.fill('k3str3lrocks');
-    await page.getByRole('button', { name: 'Login' }).click();
-    await page.waitForTimeout(1000);
-  }
-
-  const toggle = page.locator('[aria-label="Toggle sidebar"], .mobile-menu-btn');
-  await expect(toggle.first()).toBeVisible();
-  await toggle.first().click();
+  await handleLogin(page);
+  await ensureSidebarVisible(page);
 
   await expect(page.getByTestId('project-select')).toBeVisible();
   await page.getByTestId('project-create-button').click();
   await page.waitForTimeout(1200);
-  await toggle.first().click();
 
   const branchName = `pw-branch-${Date.now().toString().slice(-6)}`;
   await page.getByTestId('branch-name-input').fill(branchName);
@@ -47,12 +39,7 @@ test('reload preserves transcript and session selection', async ({ page }) => {
   await page.reload();
   const storedBeforeLogin = await page.evaluate(() => localStorage.getItem('kestrel_active_session'));
   expect(storedBeforeLogin).toBe(activeSessionId);
-  const passwordAfter = page.getByPlaceholder('Password');
-  if (await passwordAfter.count()) {
-    await passwordAfter.fill('k3str3lrocks');
-    await page.getByRole('button', { name: 'Login' }).click();
-    await page.waitForTimeout(1000);
-  }
+  await handleLogin(page);
 
   const activeSessionAfter = await page.evaluate(() => localStorage.getItem('kestrel_active_session'));
   const sessionsResponse = await page.request.get('/sessions');

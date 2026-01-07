@@ -1,27 +1,15 @@
 import { test, expect } from '@playwright/test';
+import { ensureSidebarVisible, handleLogin, ensureProjectExists } from './utils';
 
 test('source filters hide and show messages', async ({ page }) => {
   const message = `filter-${Date.now().toString().slice(-6)}`;
 
   await page.goto('/');
-  const password = page.getByPlaceholder('Password');
-  if (await password.count()) {
-    await password.fill('k3str3lrocks');
-    await page.getByRole('button', { name: 'Login' }).click();
-    await page.waitForTimeout(1000);
-  }
-
-  const toggle = page.locator('[aria-label="Toggle sidebar"], .mobile-menu-btn');
-  await expect(toggle.first()).toBeVisible();
-  await toggle.first().click();
+  await handleLogin(page);
+  await ensureSidebarVisible(page);
 
   await expect(page.getByTestId('project-select')).toBeVisible();
-  const projectOptions = await page.getByTestId('project-select').locator('option').allTextContents();
-  if (projectOptions.length === 0) {
-    await page.getByTestId('project-create-button').click();
-    await page.waitForTimeout(1200);
-    await toggle.first().click();
-  }
+  await ensureProjectExists(page);
 
   const branchName = `pw-branch-${Date.now().toString().slice(-6)}`;
   await page.getByTestId('branch-name-input').fill(branchName);
@@ -29,7 +17,6 @@ test('source filters hide and show messages', async ({ page }) => {
   const branchItem = page.getByTestId(`branch-item-${branchName}`);
   await expect(branchItem).toBeVisible();
   await branchItem.click();
-  await toggle.first().click();
 
   await expect(page.getByTestId('session-status')).toHaveText(/connected/i);
   await page.getByTestId('message-input').fill(message);

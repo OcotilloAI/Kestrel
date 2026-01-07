@@ -2,32 +2,33 @@
 
 ## Overview
 
-Kestrel is a voice-first software development interface. The UI presents full technical detail, while the spoken channel delivers concise summaries suited for audio consumption. This document captures both the current baseline and the target architecture.
+Kestrel is a voice-first software development interface. The UI presents full technical detail, while the spoken channel delivers concise, high-signal summaries suited for audio consumption. This document captures the current baseline and the target architecture aligned with `OVERVIEW_OF_KESTREL_GOALS.md` and `KESTREL_INTERFACE_NOTES.md`.
 
-The system follows a pipeline architecture, wrapping the `goose` CLI process by default. It avoids modifying `goose` core directly, ensuring compatibility with future updates.
+Kestrel’s core is an LLM + tool loop. The system does not insert content into the conversation beyond required orchestration; it forwards user intent, executes tool calls, and only speaks the end-of-phase summary or clarifying questions.
 
 ```mermaid
 graph LR
     User((User)) <--> |Audio| ClientOS
     User((User)) <--> |UI| WebUI
     WebUI <--> |HTTP + WS| KestrelServer
-    KestrelServer <--> |StdIO / MCP| Goose[Goose Agent]
+    KestrelServer <--> |OpenAI-compatible API| LLM
+    KestrelServer <--> |Tools| Tooling[Tool Runner]
 ```
 
 ## Components
 
-### 1. The Core: Goose Agent
-*   **Role**: The "Brain". Handles tool use, file editing, and reasoning.
-*   **Integration**: We run `goose` as a subprocess via a Runner interface.
-*   **Communication**:
-    *   **Input**: Standard Input (stdin) for user prompts.
-    *   **Output**: Standard Output (stdout) for text responses.
-    *   **Future**: Potential integration via MCP (Model Context Protocol) if `goose` exposes a server mode suitable for this.
+### 1. The Core: LLM + Tool Loop
+*   **Role**: The primary coding agent. It plans, requests tools, and produces the final response.
+*   **Integration**: OpenAI-compatible API (llama.cpp by default).
+*   **Contract**:
+    *   The LLM outputs either a tool call or a final response.
+    *   Tool results are injected back into the LLM as ground truth.
+    *   Kestrel does not fabricate tool output or modify intent.
 
 ### 2. Orchestrator (Session Core)
 *   **Role**: Owns session state, transcripts, and tool context.
-*   **Model Routing**: Assigns responsibilities to controller/coder/summarizer roles.
-*   **Stream Framing**: Emits structured records for UI and speech layers.
+*   **Model Routing**: Coordinates planner + executor + summarizer roles.
+*   **Stream Framing**: Emits structured records for UI rendering and speech gating.
 
 ### 3. Speech-to-Text (STT)
 *   **Baseline**: Browser/OS speech recognition on the client device.
@@ -39,7 +40,7 @@ graph LR
 *   **Why**: Keeps playback local, reduces latency, and supports mobile/desktop without extra server models.
 *   **Target**: Optional server-side TTS for consistent voice or offline use.
 
-### 5. Tooling Layer (MCP Gateway)
+### 5. Tooling Layer
 *   **Registry**: Tools are described with metadata, permissions, and session scoping.
 *   **Invocation**: Each call is a structured event with input/output boundaries.
 *   **Transport**: Tools can be local, remote, or containerized.
@@ -51,9 +52,10 @@ graph LR
     *   "I did ...", "I learned ...", "Next ..."
 
 ## Voice-First UX Contract
-*   **Spoken channel**: concise recaps, progress updates, and clarifying questions.
+*   **Spoken channel**: only final answers, summaries, and clarifying questions.
 *   **Visual channel**: full logs, tool outputs, and code blocks for review.
-*   **Speech safety**: avoid reading raw tool output; use short placeholders.
+*   **Speech safety**: avoid reading raw tool output; speak summaries of results.
+*   **Tight loop**: user prompt → LLM plan/tool use → end-of-phase summary → user confirmation.
 
 ## Conversational Orchestration (Phase 2)
 Beyond summaries, Kestrel should support a back-and-forth dialog about the work:
@@ -71,14 +73,16 @@ Beyond summaries, Kestrel should support a back-and-forth dialog about the work:
 1.  **Speech Input**:
     *   The browser captures speech and transcribes to text using OS-provided STT.
     *   The UI sends text to the server via WebSocket.
-2.  **Agent Processing**:
-    *   Kestrel forwards text to Goose over stdin.
-    *   Goose emits output over stdout/stderr, streamed back to the UI.
-3.  **UI Rendering**:
-    *   The UI renders full text, code blocks, and tool outputs in the chat view.
-4.  **Speech Output**:
-    *   The UI requests a summary from `/summarize` at end-of-turn.
-    *   The UI speaks the summary using browser/OS TTS.
+2.  **LLM Processing**:
+    *   Kestrel forwards text to the LLM.
+    *   The LLM emits tool calls or a final response.
+3.  **Tool Execution**:
+    *   Kestrel executes tool calls and feeds results back to the LLM.
+4.  **UI Rendering**:
+    *   The UI renders the full stream (thoughts, tool results, code, logs).
+5.  **Speech Output**:
+    *   Kestrel emits a summary or clarifying question.
+    *   The UI speaks only those summaries/questions.
 
 ## Data Flow (Target)
 
@@ -106,18 +110,19 @@ Beyond summaries, Kestrel should support a back-and-forth dialog about the work:
 *   Summarizer tests: validate the recap format and tool/code mentions.
 *   MCP tests: validate tool scoping and permissions.
 
-## Directory Structure Plan
+## Directory Structure (Current)
 
 ```
 /
-├── README.md
 ├── ARCHITECTURE.md
-├── piper-data/       # Existing TTS models
+├── KESTREL_INTERFACE_NOTES.md
 ├── src/
-│   ├── main.py       # Entry point
-│   ├── stt.py        # Whisper wrapper
-│   ├── tts.py        # Piper wrapper
-│   ├── bridge.py     # Goose subprocess manager
-│   └── audio.py      # Mic/Speaker handling
-└── requirements.txt
+│   ├── server.py         # HTTP + WS API + orchestration loop
+│   ├── agent_runner.py   # LLM + tool loop
+│   ├── agent_tools.py    # Tool registry + execution
+│   ├── agent_session.py  # Session context
+│   └── session_manager.py
+├── ui/
+│   └── web/              # React UI
+└── tests/
 ```

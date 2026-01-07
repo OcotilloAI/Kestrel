@@ -1,7 +1,8 @@
 import re
+
 import requests
 
-API_URL = "http://localhost:8000"
+from conftest import BASE_URL
 
 
 def test_summarizer_contract():
@@ -10,7 +11,7 @@ def test_summarizer_contract():
         "```python\\nprint('hello')\\n```\\n"
         "Then we added tests for the summarizer."
     )
-    res = requests.post(f"{API_URL}/summarize", json={"text": text})
+    res = requests.post(f"{BASE_URL}/summarize", json={"text": text})
     res.raise_for_status()
     summary = res.json().get("summary", "").strip()
 
@@ -22,7 +23,7 @@ def test_summarizer_contract():
 
 def test_summarizer_keeps_required_phrase():
     text = "We should display \"Hello World\" on the homepage and nothing else."
-    res = requests.post(f"{API_URL}/summarize", json={"text": text})
+    res = requests.post(f"{BASE_URL}/summarize", json={"text": text})
     res.raise_for_status()
     summary = res.json().get("summary", "").strip()
 
@@ -37,5 +38,5 @@ def test_record_client_event():
         "source": "summary",
         "content": "I did read a file."
     }
-    res = requests.post(f"{API_URL}/session/invalid-session/event", json=payload)
+    res = requests.post(f"{BASE_URL}/session/invalid-session/event", json=payload)
     assert res.status_code == 404

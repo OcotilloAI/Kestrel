@@ -1,19 +1,12 @@
 import { test, expect } from '@playwright/test';
+import { ensureSidebarVisible, handleLogin } from './utils';
 
 test('deleting an active branch removes it from the list', async ({ page }) => {
   const branchName = `pw-branch-${Date.now().toString().slice(-6)}`;
 
   await page.goto('/');
-
-  const password = page.getByPlaceholder('Password');
-  if (await password.count()) {
-    await password.fill('k3str3lrocks');
-    await page.getByRole('button', { name: 'Login' }).click();
-  }
-
-  const toggle = page.locator('[aria-label="Toggle sidebar"], .mobile-menu-btn');
-  await expect(toggle.first()).toBeVisible();
-  await toggle.first().click();
+  await handleLogin(page);
+  await ensureSidebarVisible(page);
 
   await expect(page.getByTestId('project-select')).toBeVisible();
 
