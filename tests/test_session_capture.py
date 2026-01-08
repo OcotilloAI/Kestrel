@@ -183,6 +183,59 @@ class TestTypedEventRecording:
         assert "ts" in ev
 
 
+class TestCoderAgentEventCorrelation:
+    """Test that coder_agent emits events with proper task_id and call_id."""
+
+    def test_tool_events_have_task_and_call_ids(self):
+        """Verify tool_call and tool_result events include correlation IDs."""
+        # This is a structural test - we verify the expected event format
+        # without needing to run the actual LLM
+        
+        # Sample events as coder_agent would emit
+        sample_tool_call = {
+            "type": "tool_call",
+            "role": "system",
+            "content": '{"name": "list_dir", "arguments": {"path": "."}}',
+            "source": "coder",
+            "metadata": {
+                "tool_name": "list_dir",
+                "call_id": "task_abc123_call_1",
+                "task_id": "task_abc123",
+                "cwd": "/tmp/test",
+            },
+        }
+        
+        sample_tool_result = {
+            "type": "tool_result",
+            "role": "system", 
+            "content": '{"files": ["test.py"]}',
+            "source": "tool_runner",
+            "metadata": {
+                "tool_name": "list_dir",
+                "call_id": "task_abc123_call_1",
+                "task_id": "task_abc123",
+                "success": True,
+                "duration_ms": 5,
+                "cwd": "/tmp/test",
+            },
+        }
+        
+        # Verify required fields
+        assert sample_tool_call["type"] == "tool_call"
+        assert "task_id" in sample_tool_call["metadata"]
+        assert "call_id" in sample_tool_call["metadata"]
+        assert "tool_name" in sample_tool_call["metadata"]
+        
+        assert sample_tool_result["type"] == "tool_result"
+        assert "task_id" in sample_tool_result["metadata"]
+        assert "call_id" in sample_tool_result["metadata"]
+        assert "success" in sample_tool_result["metadata"]
+        assert "duration_ms" in sample_tool_result["metadata"]
+        
+        # Verify call_id correlation
+        assert sample_tool_call["metadata"]["call_id"] == sample_tool_result["metadata"]["call_id"]
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

@@ -455,8 +455,67 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 await websocket.send_text(json.dumps(task_event))
                 continue
 
-            # Handle summary (final output for voice)
+            # Handle tool_call events (typed recording)
+            if event_type == "tool_call":
+                tool_name = event_metadata.get("tool_name", "unknown")
+                call_id = event_metadata.get("call_id", "unknown")
+                task_id = event_metadata.get("task_id")
+                manager.record_tool_call(
+                    session_id,
+                    tool_name=tool_name,
+                    arguments=content,
+                    call_id=call_id,
+                    source=source,
+                    task_id=task_id,
+                )
+                # Also send to WebSocket for UI
+                outgoing = make_event(
+                    event_type="tool",
+                    role="system",
+                    content=f"Tool request: {tool_name}\n```json\n{content}\n```",
+                    metadata=event_metadata,
+                    source="tool",
+                )
+                await websocket.send_text(json.dumps(outgoing))
+                continue
+
+            # Handle tool_result events (typed recording)
+            if event_type == "tool_result":
+                tool_name = event_metadata.get("tool_name", "unknown")
+                call_id = event_metadata.get("call_id", "unknown")
+                success = event_metadata.get("success", True)
+                duration_ms = event_metadata.get("duration_ms")
+                manager.record_tool_result(
+                    session_id,
+                    tool_name=tool_name,
+                    result=content,
+                    call_id=call_id,
+                    success=success,
+                    duration_ms=duration_ms,
+                )
+                # Also send to WebSocket for UI
+                status = "✓" if success else "✗"
+                outgoing = make_event(
+                    event_type="tool",
+                    role="system",
+                    content=f"Tool response {status}: {tool_name}\n```json\n{content}\n```",
+                    metadata=event_metadata,
+                    source="tool",
+                )
+                await websocket.send_text(json.dumps(outgoing))
+                continue
+
+            # Handle summary (final output for voice) - typed recording
             if event_type == "summary":
+                task_id = event_metadata.get("task_id")
+                files_changed = event_metadata.get("files_changed")
+                manager.record_summary(
+                    session_id,
+                    summary=content,
+                    task_id=task_id,
+                    files_changed=files_changed,
+                )
+                # Also send to WebSocket for UI/TTS
                 summary_event = make_event(
                     event_type="summary",
                     role="system",
@@ -464,11 +523,10 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     metadata=event_metadata,
                     source="summary",
                 )
-                manager.record_event(session_id, summary_event)
                 await websocket.send_text(json.dumps(summary_event))
                 continue
 
-            # Default: forward event as-is
+            # Default: forward event as-is (generic recording)
             outgoing = make_event(
                 event_type=event_type,
                 role=role,
@@ -483,6 +541,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     meta = manager.get_session_metadata(session_id) or {}
     cwd = meta.get("cwd", "unknown")
     if not meta.get("welcome_sent"):
+        # Record session start with typed method
+        manager.record_system_event(
+            session_id,
+            "Session started",
+            event_type="session_created",
+            severity="info",
+        )
         welcome_event = make_event(
             event_type="system",
             role="system",

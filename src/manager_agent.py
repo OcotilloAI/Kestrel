@@ -258,16 +258,17 @@ class ManagerAgent:
             # Build task prompt for coder
             task_prompt = self._build_coder_prompt(task, plan, last_result)
 
-            # Run coder agent
+            # Run coder agent with task_id for event correlation
             coder_output_parts: List[str] = []
-            async for event in self.coder.run(session, task_prompt):
+            async for event in self.coder.run(session, task_prompt, task_id=f"task_{task.id}"):
                 # Collect coder output to parse result
                 if event.get("type") == "assistant":
                     coder_output_parts.append(event.get("content", ""))
 
-                # Add task context to event
+                # Ensure task context in event metadata
                 event["metadata"] = event.get("metadata", {})
-                event["metadata"]["task_id"] = task.id
+                if "task_id" not in event["metadata"]:
+                    event["metadata"]["task_id"] = f"task_{task.id}"
                 event["metadata"]["attempt"] = attempt + 1
 
                 # Yield coder events so they get sent to websocket

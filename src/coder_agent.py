@@ -5,10 +5,12 @@ Wraps the base AgentRunner with:
 - Error detection from tool output
 - Retry logic with alternative approaches
 - Structured TaskResult reporting via XML
+- Task and call ID tracking for session capture
 """
 
 import json
 import re
+import uuid
 from typing import AsyncGenerator, Dict, Any, List, Optional
 
 from agent_session import AgentSession
@@ -75,6 +77,7 @@ class CoderAgent:
         self,
         session: AgentSession,
         user_text: str,
+        task_id: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Execute a task with internal planning and validation.
 
@@ -82,7 +85,17 @@ class CoderAgent:
         - Think block parsing for planning visibility
         - Result block parsing for structured output
         - Better error detection
+        - Task and call ID tracking for session capture
+        
+        Args:
+            session: The agent session with history and cwd
+            user_text: The user's request
+            task_id: Optional task ID for event correlation (auto-generated if not provided)
         """
+        # Generate task_id for event correlation
+        task_id = task_id or f"task_{uuid.uuid4().hex[:12]}"
+        call_counter = 0  # For generating unique call IDs
+        
         session.history.append({"role": "user", "content": user_text})
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": CODER_SYSTEM_PROMPT},
@@ -110,6 +123,7 @@ class CoderAgent:
                     "role": "coder",
                     "content": think_match.group(1).strip(),
                     "source": "coder",
+                    "metadata": {"task_id": task_id},
                 }
                 # Remove think block from content
                 content = re.sub(r"<think>[\s\S]*?</think>", "", content).strip()
@@ -139,6 +153,7 @@ class CoderAgent:
                             "content": result.summary,
                             "source": "coder",
                             "metadata": {
+                                "task_id": task_id,
                                 "status": result.status.value,
                                 "files_changed": result.files_changed,
                                 "tested": result.tested,
@@ -153,6 +168,7 @@ class CoderAgent:
                     "role": "system",
                     "content": "Coder returned no tool calls or final response. Stopping.",
                     "source": "system",
+                    "metadata": {"task_id": task_id, "severity": "warn"},
                 }
                 return
 
@@ -166,49 +182,57 @@ class CoderAgent:
                 except json.JSONDecodeError:
                     args = {}
 
-                # Emit tool request
+                # Generate unique call_id for this tool invocation
+                call_counter += 1
+                call_id = call.get("id") or f"{task_id}_call_{call_counter}"
+
+                # Emit tool request (tool_call event)
                 tool_request_content = json.dumps(
                     {"name": tool_name, "arguments": args},
                     ensure_ascii=True,
                     indent=2,
                 )
                 yield {
-                    "type": "tool",
+                    "type": "tool_call",
                     "role": "system",
-                    "content": (
-                        f"Tool request: {tool_name}\n"
-                        f"Working directory: {session.cwd}\n"
-                        f"```json\n{tool_request_content}\n```"
-                    ),
-                    "source": "tool",
-                    "metadata": {"tool_name": tool_name, "cwd": session.cwd},
+                    "content": tool_request_content,
+                    "source": "coder",
+                    "metadata": {
+                        "tool_name": tool_name,
+                        "call_id": call_id,
+                        "task_id": task_id,
+                        "cwd": session.cwd,
+                    },
                 }
 
-                # Execute tool
+                # Execute tool and measure duration
+                import time
+                start_time = time.time()
                 try:
                     result = self._run_tool(session.cwd, tool_name, args)
+                    duration_ms = int((time.time() - start_time) * 1000)
                     tool_result_text = json.dumps(result, ensure_ascii=True, indent=2)
 
                     # Check for errors in result
-                    has_error = False
+                    success = True
                     if isinstance(result, dict):
                         exit_code = result.get("exit_code")
                         if exit_code is not None and exit_code != 0:
-                            has_error = True
+                            success = False
 
+                    # Emit tool result (tool_result event)
                     yield {
-                        "type": "tool",
+                        "type": "tool_result",
                         "role": "system",
-                        "content": (
-                            f"Tool response: {tool_name}\n"
-                            f"Working directory: {session.cwd}\n"
-                            f"```json\n{tool_result_text}\n```"
-                        ),
-                        "source": "tool",
+                        "content": tool_result_text,
+                        "source": "tool_runner",
                         "metadata": {
                             "tool_name": tool_name,
+                            "call_id": call_id,
+                            "task_id": task_id,
+                            "success": success,
+                            "duration_ms": duration_ms,
                             "cwd": session.cwd,
-                            "has_error": has_error,
                         },
                     }
 
@@ -231,12 +255,22 @@ class CoderAgent:
                     })
 
                 except Exception as exc:
+                    duration_ms = int((time.time() - start_time) * 1000)
                     error_text = f"Tool error ({tool_name}): {exc}"
+                    # Emit failed tool result
                     yield {
-                        "type": "system",
+                        "type": "tool_result",
                         "role": "system",
                         "content": error_text,
-                        "source": "system",
+                        "source": "tool_runner",
+                        "metadata": {
+                            "tool_name": tool_name,
+                            "call_id": call_id,
+                            "task_id": task_id,
+                            "success": False,
+                            "duration_ms": duration_ms,
+                            "error": str(exc),
+                        },
                     }
                     messages.append({"role": "system", "content": error_text})
 
@@ -249,6 +283,7 @@ class CoderAgent:
                 "role": "system",
                 "content": "Coder stopped after too many steps without completing the task.",
                 "source": "system",
+                "metadata": {"task_id": task_id, "severity": "error"},
             }
 
     def _strip_tool_tags(self, content: str) -> str:
