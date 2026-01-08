@@ -183,6 +183,83 @@ class TestTypedEventRecording:
         assert "ts" in ev
 
 
+class TestMarkdownNoteGeneration:
+    """Test markdown note generation from session events."""
+
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.sm = SessionManager(self.tmpdir)
+        self.sid = self.sm.create_session()
+
+    def test_generate_interaction_note(self):
+        """Test that interaction notes are generated correctly."""
+        # Simulate a full interaction
+        self.sm.record_stt_raw(self.sid, "create a hello world script", source="whisper")
+        self.sm.record_user_intent(self.sid, "Create hello.py with print statement")
+        self.sm.record_tool_call(
+            self.sid,
+            tool_name="write_file",
+            arguments='{"path": "hello.py", "content": "print(\'Hello\')"}',
+            call_id="call_001",
+            task_id="task_001",
+        )
+        self.sm.record_tool_result(
+            self.sid,
+            tool_name="write_file",
+            result="File written",
+            call_id="call_001",
+            success=True,
+            duration_ms=12,
+        )
+        
+        # Generate note (called by record_summary)
+        self.sm.record_summary(
+            self.sid,
+            "I created hello.py with a print statement. Next: run it?",
+            task_id="task_001",
+            files_changed=["hello.py"],
+            generate_note=True,
+        )
+        
+        # Read the generated note
+        notes = self.sm.get_session_notes(self.sid)
+        assert notes is not None
+        assert "create a hello world script" in notes
+        assert "hello.py" in notes
+        assert "write_file" in notes
+        assert "✓" in notes  # Success indicator
+
+    def test_note_includes_obsidian_links(self):
+        """Test that Python files get Obsidian-style links."""
+        self.sm.record_stt_raw(self.sid, "add tests", source="whisper")
+        self.sm.record_summary(
+            self.sid,
+            "Added tests",
+            files_changed=["src/main.py", "tests/test_main.py"],
+        )
+        
+        notes = self.sm.get_session_notes(self.sid)
+        assert notes is not None
+        assert "[[src/main.py]]" in notes
+        assert "[[tests/test_main.py]]" in notes
+
+    def test_notes_append_to_daily_file(self):
+        """Test that multiple interactions append to the same daily file."""
+        # First interaction
+        self.sm.record_stt_raw(self.sid, "first task", source="whisper")
+        self.sm.record_summary(self.sid, "Did first task")
+        
+        # Second interaction
+        self.sm.record_stt_raw(self.sid, "second task", source="whisper")
+        self.sm.record_summary(self.sid, "Did second task")
+        
+        notes = self.sm.get_session_notes(self.sid)
+        assert notes is not None
+        assert "first task" in notes
+        assert "second task" in notes
+        assert notes.count("###") == 2  # Two interaction headers
+
+
 class TestCoderAgentEventCorrelation:
     """Test that coder_agent emits events with proper task_id and call_id."""
 

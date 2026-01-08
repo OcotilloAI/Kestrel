@@ -526,8 +526,12 @@ class SessionManager:
         files_changed: Optional[List[str]] = None,
         tts_voice: Optional[str] = None,
         format: str = "i_did_i_learned_next",
+        generate_note: bool = True,
     ) -> None:
-        """Record end-of-task summary (what gets spoken to user)."""
+        """Record end-of-task summary (what gets spoken to user).
+        
+        Also generates a markdown note for the interaction if generate_note=True.
+        """
         meta: Dict[str, Any] = {"format": format}
         if task_id:
             meta["task_id"] = task_id
@@ -542,6 +546,18 @@ class SessionManager:
             "content": summary,
             "meta": meta,
         })
+        
+        # Auto-generate markdown note on summary
+        if generate_note:
+            try:
+                self.generate_interaction_note(
+                    session_id,
+                    summary_content=summary,
+                    task_id=task_id,
+                    files_changed=files_changed,
+                )
+            except Exception:
+                self.logger.exception("Failed to auto-generate interaction note")
 
     def record_system_event(
         self,
@@ -712,3 +728,205 @@ class SessionManager:
 
         flush()
         return aggregated
+
+    # -------------------------------------------------------------------------
+    # Markdown Note Generation (Phase 3 - Session Capture Enhancement)
+    # -------------------------------------------------------------------------
+
+    def _build_notes_path(self, branch_name: Optional[str], project_root: Optional[Path], session_id: str) -> Path:
+        """Build path for daily markdown notes file."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if project_root:
+            notes_dir = project_root / ".kestrel" / "notes"
+            if branch_name:
+                notes_dir = notes_dir / branch_name
+            notes_dir.mkdir(parents=True, exist_ok=True)
+            return notes_dir / f"{today}.md"
+        return self.sessions_dir / f"{session_id}_{today}.md"
+
+    def _get_recent_events_for_note(self, session_id: str, since_ts: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get recent events from transcript for note generation.
+        
+        If since_ts is provided, only returns events after that timestamp.
+        Otherwise returns events from the most recent user message onwards.
+        """
+        transcript = self.get_transcript(session_id)
+        if not transcript:
+            return []
+        
+        if since_ts:
+            # Filter to events after the given timestamp
+            return [e for e in transcript if e.get("ts", "") > since_ts]
+        
+        # Find the most recent user message and return everything after it
+        last_user_idx = -1
+        for i, event in enumerate(transcript):
+            if event.get("role") == "user" or event.get("type") == "stt_raw":
+                last_user_idx = i
+        
+        if last_user_idx == -1:
+            return transcript[-20:]  # Fallback: last 20 events
+        
+        return transcript[last_user_idx:]
+
+    def generate_interaction_note(
+        self,
+        session_id: str,
+        summary_content: str,
+        task_id: Optional[str] = None,
+        files_changed: Optional[List[str]] = None,
+    ) -> Optional[Path]:
+        """Generate a markdown note for the completed interaction.
+        
+        Called after a summary event to create human-readable session notes.
+        Returns the path to the notes file, or None if generation failed.
+        """
+        meta = self._session_metadata.get(session_id, {})
+        if not meta:
+            return None
+        
+        project_root = Path(meta["project_root"]) if meta.get("project_root") else None
+        branch_name = meta.get("branch_name")
+        
+        # Get recent events for this interaction
+        events = self._get_recent_events_for_note(session_id)
+        if not events:
+            return None
+        
+        # Extract key information from events
+        user_request = ""
+        plan_content = ""
+        tool_calls: List[Dict[str, Any]] = []
+        
+        for event in events:
+            event_type = event.get("type", "")
+            content = event.get("content", "")
+            event_meta = event.get("meta", {})
+            
+            if event.get("role") == "user" and not user_request:
+                user_request = content
+            elif event_type == "stt_raw" and not user_request:
+                user_request = content
+            elif event_type == "planning":
+                plan_content = content
+            elif event_type == "tool_call":
+                tool_calls.append({
+                    "name": event_meta.get("tool_name", "unknown"),
+                    "call_id": event_meta.get("call_id", ""),
+                })
+            elif event_type == "tool_result":
+                # Find matching tool call and add result
+                call_id = event_meta.get("call_id", "")
+                for tc in tool_calls:
+                    if tc.get("call_id") == call_id:
+                        tc["success"] = event_meta.get("success", True)
+                        tc["duration_ms"] = event_meta.get("duration_ms")
+                        break
+        
+        # Generate markdown
+        now = datetime.now(timezone.utc)
+        time_str = now.strftime("%H:%M")
+        
+        lines: List[str] = []
+        lines.append(f"### {time_str} - \"{user_request[:50]}{'...' if len(user_request) > 50 else ''}\"")
+        lines.append("")
+        
+        if user_request:
+            lines.append(f"**User said:** \"{user_request}\"")
+            lines.append("")
+        
+        if plan_content:
+            lines.append("**Plan:**")
+            # Format plan as numbered list if not already
+            plan_lines = plan_content.strip().split("\n")
+            for i, pl in enumerate(plan_lines, 1):
+                pl = pl.strip()
+                if pl and not pl[0].isdigit():
+                    lines.append(f"{i}. {pl}")
+                else:
+                    lines.append(pl)
+            lines.append("")
+        
+        if tool_calls:
+            lines.append("**Tools used:**")
+            for tc in tool_calls:
+                status = "✓" if tc.get("success", True) else "✗"
+                duration = f" ({tc['duration_ms']}ms)" if tc.get("duration_ms") else ""
+                lines.append(f"- {status} `{tc['name']}`{duration}")
+            lines.append("")
+        
+        if summary_content:
+            lines.append("**Outcome:**")
+            lines.append(summary_content)
+            lines.append("")
+        
+        if files_changed:
+            lines.append("**Files changed:**")
+            for f in files_changed:
+                # Use Obsidian-style links for code files
+                if f.endswith(('.py', '.ts', '.js', '.tsx', '.jsx', '.md')):
+                    lines.append(f"- [[{f}]]")
+                else:
+                    lines.append(f"- `{f}`")
+            lines.append("")
+        
+        lines.append("---")
+        lines.append("")
+        
+        # Write to notes file
+        notes_path = self._build_notes_path(branch_name, project_root, session_id)
+        
+        try:
+            # Create header if file doesn't exist
+            if not notes_path.exists():
+                session_name = meta.get("name", session_id)
+                header = f"# Session: {session_name}\n## {now.strftime('%Y-%m-%d')}\n\n"
+                notes_path.write_text(header, encoding="utf-8")
+            
+            # Append the note
+            with notes_path.open("a", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+            
+            self.logger.info(f"Generated note at {notes_path}")
+            return notes_path
+            
+        except Exception:
+            self.logger.exception("Failed to generate session note")
+            return None
+
+    def get_session_notes(self, session_id: str, date: Optional[str] = None) -> Optional[str]:
+        """Read session notes for a given date (defaults to today).
+        
+        Args:
+            session_id: The session ID
+            date: Date string in YYYY-MM-DD format (defaults to today)
+            
+        Returns:
+            The markdown content, or None if not found
+        """
+        meta = self._session_metadata.get(session_id, {})
+        if not meta:
+            return None
+        
+        project_root = Path(meta["project_root"]) if meta.get("project_root") else None
+        branch_name = meta.get("branch_name")
+        
+        if date:
+            # Build path for specific date
+            if project_root:
+                notes_dir = project_root / ".kestrel" / "notes"
+                if branch_name:
+                    notes_dir = notes_dir / branch_name
+                notes_path = notes_dir / f"{date}.md"
+            else:
+                notes_path = self.sessions_dir / f"{session_id}_{date}.md"
+        else:
+            notes_path = self._build_notes_path(branch_name, project_root, session_id)
+        
+        if notes_path.exists():
+            try:
+                return notes_path.read_text(encoding="utf-8")
+            except Exception:
+                self.logger.exception("Failed to read session notes")
+        
+        return None
