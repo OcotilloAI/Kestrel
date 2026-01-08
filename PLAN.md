@@ -4,8 +4,43 @@
 - Improve session lifecycle stability (create/clone/delete, active session switching).
 - Stabilize UI behavior across iOS phone, iOS tablet, and Mac Safari/Chrome.
 - Reduce crash risk with better error handling and logging.
+- **Enable full session capture for RAG and review** (new)
 
-## Current Focus (Stability)
+## Current Focus (Session Capture)
+
+> See [docs/SESSION_CAPTURE.md](docs/SESSION_CAPTURE.md) for architecture.
+
+### Phase 1: Enhanced Event Schema
+- [ ] Add new event types: `stt_raw`, `user_intent`, `agent_stream`
+- [ ] Migrate `timestamp` → `ts` (ISO 8601)
+- [ ] Add `meta` object to all events
+- [ ] Update `record_event()` in session_manager.py
+
+### Phase 2: Agent Stream Capture
+- [ ] Capture full stdout/stderr from coding agent subprocess
+- [ ] Buffer and chunk long-running streams
+- [ ] Add task_id correlation across related events
+
+### Phase 3: Markdown Note Generation
+- [ ] Generate daily markdown from JSONL post-hoc
+- [ ] Trigger on `summary` event
+- [ ] Include: user request, plan, changes, files, outcome
+- [ ] Obsidian-compatible format (backlinks where useful)
+
+### Phase 4: Audio Input Pipeline
+- [ ] Server-side Whisper integration (Option B)
+- [ ] Audio upload endpoint
+- [ ] STT → event capture → task execution flow
+
+### Backlog
+- [ ] RAG chunking utility
+- [ ] Vector DB export
+- [ ] Retention/pruning policy
+- [ ] Audio archival (optional)
+
+---
+
+## Previous Focus (Stability)
 - Fix clone fallback crash when source is not a git repo. (Issue #51)
 - Stop WebSocket reconnect loops after a session is deleted. (Issue #54)
 - Track and surface session creation/delete failures without crashing the server.

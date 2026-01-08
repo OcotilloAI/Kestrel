@@ -93,12 +93,27 @@ Beyond summaries, Kestrel should support a back-and-forth dialog about the work:
 5.  **Speech Output**: Summarizer emits a recap; UI speaks it.
 
 ## Stream Framing & Transcript
-*   Every output segment is framed with:
-    *   `type`: assistant | tool | system | summary
-    *   `role`: controller | coder | summarizer
-    *   `content`: full text
-    *   `metadata`: timestamps, tool identifiers, status
-*   Transcripts are stored per session inside the project tree for replay, debugging, and RAG context.
+
+> **See [docs/SESSION_CAPTURE.md](docs/SESSION_CAPTURE.md) for complete capture architecture.**
+
+Every output segment is framed with:
+*   `ts`: ISO 8601 timestamp
+*   `type`: stt_raw | user_intent | agent_stream | tool_call | tool_result | summary | system
+*   `source`: whisper | browser_stt | controller | coder | summarizer | tool_runner | system
+*   `body_b64`: base64-encoded content
+*   `meta`: type-specific metadata (tool names, file lists, task IDs, etc.)
+
+### Capture Layers
+1. **JSONL Transcripts** - Primary structured format at `{project}/.kestrel/{branch}.jsonl`
+2. **Markdown Notes** - Human-readable summaries at `{project}/.kestrel/notes/{branch}/{date}.md`
+3. **Future: Vector DB** - RAG-ready chunks derived from JSONL
+
+### Key Event Types
+*   `stt_raw`: Raw speech-to-text with audio metadata and confidence
+*   `user_intent`: Interpreted user request (may differ from raw STT)
+*   `agent_stream`: Full stdout/stderr from backend coding agents
+*   `tool_call`/`tool_result`: Tool invocations and their outputs
+*   `summary`: End-of-task recap (what gets spoken to user)
 
 ## Multi-Tenant Readiness
 *   **Tenant Isolation**: Sessions, transcripts, and tool scopes must be isolatable per tenant.

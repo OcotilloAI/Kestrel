@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import json
 import base64
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional, List, Any
 
@@ -338,23 +339,45 @@ class SessionManager:
             return session_dir / file_name
         return self.sessions_dir / f"{session_id}.jsonl"
 
+    @staticmethod
+    def _iso_now() -> str:
+        """Return current UTC time in ISO 8601 format."""
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
     def record_event(self, session_id: str, event: Dict[str, Any]) -> None:
+        """
+        Record a transcript event. Accepts legacy or new format.
+        
+        New format fields:
+        - ts: ISO 8601 timestamp (auto-generated if missing)
+        - type: event type (stt_raw, user_intent, agent_stream, tool_call, tool_result, summary, system)
+        - source: event source (whisper, browser_stt, controller, coder, summarizer, tool_runner, system)
+        - content: text content (will be base64 encoded to body_b64)
+        - meta: type-specific metadata dict
+        """
         if session_id not in self._transcripts:
             self._transcripts[session_id] = []
             meta = self._session_metadata.get(session_id, {})
             project_root = Path(meta["project_root"]) if meta.get("project_root") else None
             branch_name = meta.get("branch_name")
             self._transcript_paths[session_id] = self._build_transcript_path(branch_name, project_root, session_id)
+        
         content = event.get("content", "")
         if content is None:
             content = ""
         if not isinstance(content, str):
             content = str(content)
         encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        
         stored_event = dict(event)
+        # Add timestamp if not present (prefer ts, fall back to timestamp for legacy)
+        if "ts" not in stored_event:
+            stored_event["ts"] = stored_event.pop("timestamp", None) or self._iso_now()
+        # Normalize source field
         stored_event["source"] = stored_event.get("source") or stored_event.get("role") or stored_event.get("type") or "unknown"
         stored_event["body_b64"] = encoded
         stored_event.pop("content", None)
+        
         self._transcripts[session_id].append(stored_event)
         path = self._transcript_paths.get(session_id)
         if not path:
@@ -364,6 +387,179 @@ class SessionManager:
                 handle.write(json.dumps(stored_event, ensure_ascii=True) + "\n")
         except Exception:
             self.logger.exception("Failed to append transcript event")
+
+    # -------------------------------------------------------------------------
+    # Typed Event Recording Helpers (Phase 1 - Session Capture Enhancement)
+    # -------------------------------------------------------------------------
+
+    def record_stt_raw(
+        self,
+        session_id: str,
+        transcript: str,
+        source: str = "whisper",
+        audio_duration_ms: Optional[int] = None,
+        model: Optional[str] = None,
+        language: str = "en",
+        confidence: Optional[float] = None,
+        word_timestamps: Optional[List[Dict]] = None,
+    ) -> None:
+        """Record raw speech-to-text output with audio metadata."""
+        meta: Dict[str, Any] = {"language": language}
+        if audio_duration_ms is not None:
+            meta["audio_duration_ms"] = audio_duration_ms
+        if model:
+            meta["model"] = model
+        if confidence is not None:
+            meta["confidence"] = confidence
+        if word_timestamps:
+            meta["word_timestamps"] = word_timestamps
+        
+        self.record_event(session_id, {
+            "type": "stt_raw",
+            "source": source,
+            "content": transcript,
+            "meta": meta,
+        })
+
+    def record_user_intent(
+        self,
+        session_id: str,
+        interpreted_request: str,
+        original_stt_ts: Optional[str] = None,
+        clarification_needed: bool = False,
+        inferred_context: Optional[List[str]] = None,
+    ) -> None:
+        """Record interpreted user intent (may differ from raw STT)."""
+        meta: Dict[str, Any] = {"clarification_needed": clarification_needed}
+        if original_stt_ts:
+            meta["original_stt_ts"] = original_stt_ts
+        if inferred_context:
+            meta["inferred_context"] = inferred_context
+        
+        self.record_event(session_id, {
+            "type": "user_intent",
+            "source": "controller",
+            "content": interpreted_request,
+            "meta": meta,
+        })
+
+    def record_agent_stream(
+        self,
+        session_id: str,
+        output: str,
+        source: str = "claude-code",
+        stream: str = "stdout",
+        task_id: Optional[str] = None,
+        chunk_seq: Optional[int] = None,
+        tokens_used: Optional[int] = None,
+    ) -> None:
+        """Record coding agent stdout/stderr stream output."""
+        meta: Dict[str, Any] = {"stream": stream}
+        if task_id:
+            meta["task_id"] = task_id
+        if chunk_seq is not None:
+            meta["chunk_seq"] = chunk_seq
+        if tokens_used is not None:
+            meta["tokens_used"] = tokens_used
+        
+        self.record_event(session_id, {
+            "type": "agent_stream",
+            "source": source,
+            "content": output,
+            "meta": meta,
+        })
+
+    def record_tool_call(
+        self,
+        session_id: str,
+        tool_name: str,
+        arguments: str,
+        call_id: str,
+        source: str = "coder",
+        task_id: Optional[str] = None,
+    ) -> None:
+        """Record a tool invocation request."""
+        meta: Dict[str, Any] = {
+            "tool_name": tool_name,
+            "call_id": call_id,
+        }
+        if task_id:
+            meta["task_id"] = task_id
+        
+        self.record_event(session_id, {
+            "type": "tool_call",
+            "source": source,
+            "content": arguments,
+            "meta": meta,
+        })
+
+    def record_tool_result(
+        self,
+        session_id: str,
+        tool_name: str,
+        result: str,
+        call_id: str,
+        success: bool = True,
+        duration_ms: Optional[int] = None,
+    ) -> None:
+        """Record a tool execution result."""
+        meta: Dict[str, Any] = {
+            "tool_name": tool_name,
+            "call_id": call_id,
+            "success": success,
+        }
+        if duration_ms is not None:
+            meta["duration_ms"] = duration_ms
+        
+        self.record_event(session_id, {
+            "type": "tool_result",
+            "source": "tool_runner",
+            "content": result,
+            "meta": meta,
+        })
+
+    def record_summary(
+        self,
+        session_id: str,
+        summary: str,
+        task_id: Optional[str] = None,
+        files_changed: Optional[List[str]] = None,
+        tts_voice: Optional[str] = None,
+        format: str = "i_did_i_learned_next",
+    ) -> None:
+        """Record end-of-task summary (what gets spoken to user)."""
+        meta: Dict[str, Any] = {"format": format}
+        if task_id:
+            meta["task_id"] = task_id
+        if files_changed:
+            meta["files_changed"] = files_changed
+        if tts_voice:
+            meta["tts_voice"] = tts_voice
+        
+        self.record_event(session_id, {
+            "type": "summary",
+            "source": "summarizer",
+            "content": summary,
+            "meta": meta,
+        })
+
+    def record_system_event(
+        self,
+        session_id: str,
+        message: str,
+        event_type: str = "info",
+        severity: str = "info",
+    ) -> None:
+        """Record system events (lifecycle, errors, config changes)."""
+        self.record_event(session_id, {
+            "type": "system",
+            "source": "session_manager",
+            "content": message,
+            "meta": {
+                "event": event_type,
+                "severity": severity,
+            },
+        })
 
     def get_transcript(self, session_id: str) -> List[Dict[str, Any]]:
         meta = self._session_metadata.get(session_id, {})
