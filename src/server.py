@@ -1,8 +1,9 @@
 import asyncio
 import logging
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+import tempfile
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, File, UploadFile
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
@@ -15,6 +16,7 @@ import httpx
 import json
 import time
 import re
+import numpy as np
 
 app = FastAPI()
 
@@ -166,6 +168,190 @@ async def summarize_text(request: SummarizeRequest):
         raise HTTPException(status_code=500, detail=f"Failed to connect to LLM: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Summarization failed: {e}")
+
+
+# -------------------------------------------------------------------------
+# Audio/STT Endpoint (Phase 4 - Session Capture Enhancement)
+# -------------------------------------------------------------------------
+
+# Lazy-loaded STT model
+_stt_model = None
+
+def _get_stt_model():
+    """Get or initialize the STT model (lazy loading)."""
+    global _stt_model
+    if _stt_model is None:
+        try:
+            from stt import FasterWhisperSTT
+            model_size = os.environ.get("WHISPER_MODEL", "base.en")
+            device = os.environ.get("WHISPER_DEVICE", "cpu")
+            compute_type = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
+            _stt_model = FasterWhisperSTT(
+                model_size=model_size,
+                device=device,
+                compute_type=compute_type,
+            )
+        except ImportError as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"STT not available: {e}. Install faster-whisper."
+            )
+    return _stt_model
+
+
+def _load_audio_file(file_path: str) -> np.ndarray:
+    """Load audio file and convert to float32 numpy array at 16kHz."""
+    try:
+        import soundfile as sf
+        audio, sample_rate = sf.read(file_path, dtype='float32')
+        
+        # Convert to mono if stereo
+        if len(audio.shape) > 1:
+            audio = audio.mean(axis=1)
+        
+        # Resample to 16kHz if needed
+        if sample_rate != 16000:
+            try:
+                import librosa
+                audio = librosa.resample(audio, orig_sr=sample_rate, target_sr=16000)
+            except ImportError:
+                # Simple resampling fallback (less accurate)
+                factor = 16000 / sample_rate
+                new_length = int(len(audio) * factor)
+                audio = np.interp(
+                    np.linspace(0, len(audio) - 1, new_length),
+                    np.arange(len(audio)),
+                    audio,
+                )
+        
+        return audio.astype(np.float32)
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Audio processing not available. Install soundfile."
+        )
+
+
+@app.post("/session/{session_id}/audio")
+async def transcribe_audio(session_id: str, audio: UploadFile = File(...)):
+    """
+    Upload audio and transcribe to text.
+    
+    Accepts: wav, mp3, webm, ogg, flac, m4a
+    Returns: {"transcript": "...", "duration_ms": ..., "confidence": ...}
+    
+    The transcript is also recorded as an stt_raw event in the session.
+    """
+    session = manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Validate file type
+    allowed_types = {
+        "audio/wav", "audio/x-wav", "audio/wave",
+        "audio/mpeg", "audio/mp3",
+        "audio/webm",
+        "audio/ogg",
+        "audio/flac",
+        "audio/x-m4a", "audio/mp4",
+    }
+    content_type = audio.content_type or ""
+    if content_type and content_type not in allowed_types:
+        # Also check by extension
+        ext = os.path.splitext(audio.filename or "")[1].lower()
+        if ext not in {".wav", ".mp3", ".webm", ".ogg", ".flac", ".m4a"}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported audio type: {content_type}. Use wav, mp3, webm, ogg, flac, or m4a."
+            )
+    
+    # Save to temp file
+    ext = os.path.splitext(audio.filename or ".wav")[1] or ".wav"
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        tmp_path = tmp.name
+        content = await audio.read()
+        tmp.write(content)
+    
+    try:
+        # Load and convert audio
+        start_time = time.time()
+        audio_data = _load_audio_file(tmp_path)
+        audio_duration_ms = int(len(audio_data) / 16000 * 1000)
+        
+        # Transcribe
+        stt = _get_stt_model()
+        transcript = stt.transcribe(audio_data)
+        transcribe_time_ms = int((time.time() - start_time) * 1000)
+        
+        # Record STT event
+        manager.record_stt_raw(
+            session_id,
+            transcript=transcript,
+            source="whisper",
+            audio_duration_ms=audio_duration_ms,
+            model=os.environ.get("WHISPER_MODEL", "base.en"),
+            language="en",
+            confidence=None,  # faster-whisper doesn't provide per-utterance confidence easily
+        )
+        
+        return JSONResponse({
+            "transcript": transcript,
+            "duration_ms": audio_duration_ms,
+            "transcribe_time_ms": transcribe_time_ms,
+            "model": os.environ.get("WHISPER_MODEL", "base.en"),
+        })
+        
+    finally:
+        # Clean up temp file
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+
+@app.post("/session/{session_id}/audio/execute")
+async def transcribe_and_execute(session_id: str, audio: UploadFile = File(...)):
+    """
+    Upload audio, transcribe, and execute as a task.
+    
+    This is the full "Option B" flow:
+    1. Receive audio
+    2. Transcribe with Whisper
+    3. Record stt_raw event
+    4. Execute as user request (async via WebSocket)
+    
+    Returns: {"transcript": "...", "status": "queued"}
+    
+    Note: The actual execution happens via the WebSocket connection.
+    This endpoint queues the request and returns immediately.
+    """
+    session = manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # First, transcribe the audio
+    result = await transcribe_audio(session_id, audio)
+    transcript = result.body.decode() if hasattr(result, 'body') else "{}"
+    try:
+        transcript_data = json.loads(transcript)
+        text = transcript_data.get("transcript", "")
+    except json.JSONDecodeError:
+        text = ""
+    
+    if not text:
+        raise HTTPException(status_code=400, detail="Could not transcribe audio")
+    
+    # Record user intent
+    manager.record_user_intent(session_id, text)
+    
+    # Note: Actual execution must happen via WebSocket (async streaming)
+    # The client should open a WebSocket and send the transcript as text
+    return JSONResponse({
+        "transcript": text,
+        "status": "transcribed",
+        "message": "Send this transcript via WebSocket to execute the task.",
+    })
+
 
 @app.post("/session/{session_id}/event")
 async def record_client_event(session_id: str, request: ClientEventRequest):
