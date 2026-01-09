@@ -2,3 +2,16 @@ fastapi
 uvicorn
 websockets
 httpx
+
+# Audio/Voice dependencies
+faster-whisper     # STT
+numpy              # Audio processing
+sounddevice        # Audio I/O (optional, for local testing)
+
+# WebRTC Voice Bridge (optional)
+aiortc             # WebRTC for Python
+av                 # Audio/Video frames
+
+# VAD options (pick one)
+# torch + silero-vad  # Neural VAD (most accurate)
+# webrtcvad           # Lightweight VAD
